@@ -68,6 +68,31 @@ def apply_design(src, assets):
     apply_edit(color_manager, "selectedSchemeId = prefs.normalModeColor.getValue(),", 'selectedSchemeId = "default",')
     apply_edit(color_manager, "followSystemDayNight = prefs.followSystemDayNight.getValue(),", "followSystemDayNight = true,")
 
+    ime = java / "ime/core/TrimeInputMethodService.kt"
+    input_view = "    private var inputView: InputView? = null"
+    apply_edit(ime, input_view, input_view + "\n    private var inputViewAwaitingTheme = false")
+    theme_ready = "                ColorManager.addOnChangedListener(onColorChangeListener)"
+    apply_edit(ime, theme_ready, theme_ready + """
+                if (inputViewAwaitingTheme && ::contentView.isInitialized) {
+                    themeScope?.let { scope ->
+                        inputViewAwaitingTheme = false
+                        replaceInputViews(scope)
+                        if (isInputViewShown && inputDeviceManager.useVirtualKeyboard) {
+                            currentInputEditorInfo?.let { editor -> inputView?.startInput(editor, restarting = false) }
+                        }
+                    }
+                }""")
+    view_requested = """            Timber.w("ThemeScope is not ready yet; deferring input view creation")
+            return null
+        }
+        replaceInputViews(scope)"""
+    apply_edit(ime, view_requested, """            Timber.w("ThemeScope is not ready yet; deferring input view creation")
+            inputViewAwaitingTheme = true
+            return null
+        }
+        inputViewAwaitingTheme = false
+        replaceInputViews(scope)""")
+
     prefs = java / "data/prefs/AppPrefs.kt"
     apply_edit(prefs, "DATA_STORAGE_MODE, DataStorageMode.EXTERNAL_SYNC)",
                "DATA_STORAGE_MODE, DataStorageMode.APP_STORAGE)")

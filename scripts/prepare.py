@@ -170,7 +170,7 @@ def restrict_android_schemes(java):
         val custom = File(userDataDir, DEFAULT_CUSTOM_FILE_NAME)
         val original = if (custom.isFile) custom.readText().replace("\r\n", "\n") else ""
         val entry = Regex("""(?m)^([ \t]+)schema_list[ \t]*:[^\n]*(?:\n(?:\1[ \t]+|\1(?=-))[^\n]*)*""").find(original)
-        val patchHeader = Regex("""(?m)^patch[ \t]*:[ \t]*(?:\{[ \t]*})?[ \t]*(?:#[^\n]*)?$""").find(original)
+        val patchHeader = Regex("""(?m)^patch[ \t]*:[ \t]*(?:\{[ \t]*\})?[ \t]*(?:#[^\n]*)?$""").find(original)
         fun schemaList(indent: String): String = buildString {
             append(indent).append("schema_list:")
             for (id in inputSchemeIds) append('\n').append(indent).append("  - schema: ").append(id)
