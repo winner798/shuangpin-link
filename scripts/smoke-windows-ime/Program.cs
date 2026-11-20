@@ -22,6 +22,7 @@ internal static class Program
         if (args.Length != 2)
             throw new ArgumentException("Usage: Editor <screenshot-directory> <installed-TSF-DLL>");
 
+        DescribeDesktops();
         ApplicationConfiguration.Initialize();
         using var window = new Form
         {
@@ -156,6 +157,33 @@ internal static class Program
         bitmap.Save(Path.Combine(output, name + ".png"), ImageFormat.Png);
     }
 
+    private static void DescribeDesktops()
+    {
+        const uint DesktopReadObjects = 0x0001;
+        var inputDesktop = OpenInputDesktop(0, false, DesktopReadObjects);
+        if (inputDesktop == IntPtr.Zero)
+        {
+            Console.WriteLine($"Input desktop is unavailable (Win32 error {Marshal.GetLastPInvokeError()}).");
+            return;
+        }
+        try
+        {
+            Console.WriteLine($"Editor desktop={DesktopName(GetThreadDesktop(GetCurrentThreadId()))}, input desktop={DesktopName(inputDesktop)}.");
+        }
+        finally
+        {
+            CloseDesktop(inputDesktop);
+        }
+    }
+
+    private static string DesktopName(IntPtr desktop)
+    {
+        const int Name = 2; // UOI_NAME
+        var buffer = new StringBuilder(256);
+        return GetUserObjectInformation(desktop, Name, buffer, (uint)(buffer.Capacity * sizeof(char)), out _)
+            ? buffer.ToString() : $"unavailable ({Marshal.GetLastPInvokeError()})";
+    }
+
     private static void SendChord(params Keys[] keys)
     {
         var inputs = new Input[keys.Length * 2];
@@ -176,6 +204,21 @@ internal static class Program
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetThreadDesktop(uint threadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+
+    [DllImport("user32.dll")]
+    private static extern bool CloseDesktop(IntPtr desktop);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetUserObjectInformation(IntPtr desktop, int index, StringBuilder name, uint length, out uint required);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint count, Input[] inputs, int size);

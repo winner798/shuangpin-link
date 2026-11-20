@@ -2,7 +2,7 @@
 #include "WeaselServerApp.h"
 
 WeaselServerApp::WeaselServerApp()
-    : m_handler(std::make_unique<RimeWithWeaselHandler>(&m_ui)), tray_icon(m_ui) {
+    : m_handler(std::make_unique<RimeWithWeaselHandler>(&m_ui)) {
   m_server.SetRequestHandler(m_handler.get());
 }
 

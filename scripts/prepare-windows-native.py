@@ -48,6 +48,10 @@ def write_overlay(source, version, boost):
         properties = properties.replace(f'${key}', escape(str(value)))
     (source / 'weasel.props').write_text(properties, encoding='utf-8')
 
+    style = source / 'output/data/weasel.yaml'
+    replace(style, '# Weasel settings', '# 双拼互联候选窗配置')
+    replace_pattern(style, r'(?ms)^app_options:\n.*?(?=^show_notifications:)', '')
+
     constants = source / 'include/WeaselConstants.h'
     replace(constants, '"Weasel"', '"ShuangpinLink"')
     replace(constants, r'Software\\Rime\\Weasel', r'Software\\ShuangpinLink\\IME')
@@ -57,6 +61,20 @@ def write_overlay(source, version, boost):
                     'inline std::wstring get_weasel_ime_name() { return L"双拼互联"; }')
     replace(utility, r'Software\\Rime\\Weasel', r'Software\\ShuangpinLink\\IME')
     replace(utility, 'rime.weasel', 'rime.shuangpin_link')
+    replace(utility, '// data directories\n', r'''inline bool CanLaunchUserProcess() {
+  HANDLE token = nullptr;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+    return false;
+  TOKEN_ELEVATION elevation{};
+  DWORD size = 0;
+  const BOOL success = GetTokenInformation(token, TokenElevation, &elevation,
+                                           sizeof(elevation), &size);
+  CloseHandle(token);
+  return success && !elevation.TokenIsElevated;
+}
+
+// data directories
+''')
     ipc = source / 'include/WeaselIPC.h'
     replace(ipc, 'WeaselIPCWindow_1.0', 'ShuangpinLinkIPCWindow_1.0')
     replace(ipc, 'WeaselNamedPipe', 'ShuangpinLinkNamedPipe')
@@ -90,6 +108,7 @@ fs::path WeaselUserDataPath() {
                         f'const GUID {old} = {{{new}}};')
     replace(tsf / 'dllmain.cpp', '      SetUnhandledExceptionFilter(_UnhandledExceptionFilter);\n', '')
     replace(tsf / 'dllmain.cpp', 'rime.weasel', 'rime.shuangpin_link')
+    replace(tsf / 'DisplayAttributeInfo.cpp', 'Weasel Display Attribute Input', '双拼互联输入标记')
     replace(tsf / 'WeaselTSF.cpp', r'Software\\Rime\\weasel', r'Software\\ShuangpinLink\\IME')
     replace(tsf / 'WeaselTSF.cpp', '#include <thread>\n', '#include <atomic>\n#include <thread>\n')
     replace_pattern(tsf / 'WeaselTSF.cpp', r'(?ms)^static unsigned int retry = 0;.*?^}', r'''
@@ -99,6 +118,8 @@ bool WeaselTSF::_EnsureServerConnected() {
   _Reconnect();
   if (m_client.Echo())
     return true;
+  if (!CanLaunchUserProcess())
+    return false;
   static std::atomic<ULONGLONG> next_launch{0};
   const ULONGLONG now = GetTickCount64();
   auto allowed = next_launch.load();
@@ -128,7 +149,7 @@ void WeaselTSF::_HandleLangBarMenuSelect(UINT command) {
     m_client.TrayCommand(command);
     return;
   }
-  if (command != ID_WEASELTRAY_SETTINGS)
+  if (command != ID_WEASELTRAY_SETTINGS || !CanLaunchUserProcess())
     return;
   wchar_t path[32768]{};
   const DWORD length = ExpandEnvironmentStringsW(
@@ -145,9 +166,13 @@ void WeaselTSF::_HandleLangBarMenuSelect(UINT command) {
     server = source / 'WeaselServer'
     server_header = server / 'WeaselServerApp.h'
     replace(server_header, '#include <winsparkle.h>\n', '')
+    replace(server_header, '#include "WeaselTrayIcon.h"\n', '')
+    replace(server_header, '  WeaselTrayIcon tray_icon;\n', '')
+    replace(server_header, '  void SetupMenuHandlers();\n\n', '')
     replace_pattern(server_header, r'(?ms)^  static bool check_update\(\).*?^  }\n', '')
     server_main = server / 'WeaselServer.cpp'
     replace(server_main, '#include <winsparkle.h>\n', '')
+    replace(server_main, '#include "WeaselService.h"\n', '#include "WeaselServerApp.h"\n')
     replace_pattern(server_main, r'(?ms)^  // restart if already running.*?^  }\n\n  bool check_updates.*?^  }\n', r'''
   weasel::Client client;
   if (client.Connect()) {
@@ -158,6 +183,9 @@ void WeaselTSF::_HandleLangBarMenuSelect(UINT command) {
   if (quit)
     return 0;
 '''.lstrip('\n'))
+    server_project = server / 'WeaselServer.vcxproj'
+    for entry in ('WeaselService', 'WeaselTrayIcon'):
+        replace(server_project, f'    <ClCompile Include="{entry}.cpp" />\n', '')
 
     deployer = source / 'WeaselDeployer/WeaselDeployer.vcxproj'
     for entry in ('Configurator', 'DictManagementDialog', 'SwitcherSettingsDialog',
@@ -179,6 +207,7 @@ void WeaselTSF::_HandleLangBarMenuSelect(UINT command) {
         identities = {'InternalName': branded, 'OriginalFilename': filename}
         content = re.sub(r'(?m)^(\s*VALUE "(CompanyName|FileDescription|InternalName|OriginalFilename|ProductName)",[ \t]*)[^\n]+',
                          lambda match: f'{match[1]}"{identities.get(match[2], "双拼互联")}"', content)
+        content = content.replace('VALUE "FileVersion", FILE_VERSION', f'VALUE "FileVersion", "{version}.0"')
         content = content.replace('小狼毫', '双拼互联').replace('afxres.h', 'winres.h')
         if project == server:
             content = re.sub(r'(?ms)^\w+ APPCAST\s*\nBEGIN\s*\n.*?^END\n', '', content)

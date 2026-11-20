@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32;
 using ShuangpinLink;
 
@@ -46,14 +47,21 @@ static class Setup
                 if (!quiet && MessageBox.Show("将安装双拼互联，包含微软双拼、普通拼音和设备互通。安装系统输入组件时，Windows 可能请求管理员权限。继续安装？", Title,
                         MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return 0;
             }
-            stage = Directory.CreateTempSubdirectory("ShuangpinLink-").FullName;
-            zip.ExtractToDirectory(stage);
             if (engineOnly)
             {
-                EngineInstaller.InstallMachineFiles(Path.Combine(stage, "ime"));
+                EngineInstaller.InstallMachineFiles(zip);
                 return 0;
             }
-            string? migrationNotice = Install(stage);
+            using var userInstaller = new Mutex(true, @"Local\ShuangpinLink.UserSetup", out bool firstInstaller);
+            if (!firstInstaller) throw new InvalidOperationException("当前用户的双拼互联正在安装。");
+            stage = Directory.CreateTempSubdirectory("ShuangpinLink-").FullName;
+            foreach (string file in required.Where(file => !file.StartsWith("ime/", StringComparison.Ordinal)))
+            {
+                string destination = Path.Combine(stage, file);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                zip.GetEntry(file)!.ExtractToFile(destination);
+            }
+            string? migrationNotice = Install(zip, stage);
             complete = true;
             if (!quiet)
                 MessageBox.Show("安装完成。按 Win + 空格选择「双拼互联」。打字时按 Ctrl + ` 切换微软双拼和普通拼音。" + migrationNotice, Title,
@@ -62,7 +70,11 @@ static class Setup
         }
         catch (Exception error)
         {
-            if (quiet) Console.Error.WriteLine(error);
+            if (quiet)
+            {
+                using var diagnostics = new StreamWriter(Console.OpenStandardError(), new UTF8Encoding(false));
+                diagnostics.WriteLine(error);
+            }
             else MessageBox.Show(error.Message, Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
@@ -110,10 +122,10 @@ static class Setup
             Process.Start(new ProcessStartInfo(InstalledExecutable) { UseShellExecute = true })?.Dispose();
     }
 
-    static string? Install(string stage)
+    static string? Install(ZipArchive archive, string stage)
     {
         var previous = InputPaths.InstalledEngine();
-        var engine = EngineInstaller.EnsureInstalled(Path.Combine(stage, "ime"));
+        var engine = EngineInstaller.EnsureInstalled(archive);
         var rimeUser = InputPaths.UserDirectory;
         var legacy = InputDataMigration.FindLegacyDirectory(LocalRoot);
         string migrationMarker = Path.Combine(rimeUser, "legacy-dictionary-migrated");

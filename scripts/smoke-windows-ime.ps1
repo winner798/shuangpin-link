@@ -12,8 +12,11 @@ $installerPath = (Resolve-Path -LiteralPath $Installer).Path
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 [void](New-Item -ItemType Directory -Force -Path $output)
 $session = (Get-Process -Id $PID).SessionId
-"Windows $([Environment]::OSVersion.Version), session $session, interactive=$([Environment]::UserInteractive)" |
-    Set-Content -LiteralPath (Join-Path $output 'environment.txt')
+& {
+    "Windows $([Environment]::OSVersion.Version), session $session, interactive=$([Environment]::UserInteractive)"
+    Get-Process -Name explorer, ctfmon -ErrorAction SilentlyContinue |
+        Select-Object Name, Id, SessionId | Format-Table -AutoSize | Out-String
+} | Set-Content -LiteralPath (Join-Path $output 'environment.txt')
 if (-not [Environment]::UserInteractive -or $session -eq 0) {
     throw 'A Windows user desktop is required to test real keyboard input.'
 }
@@ -39,54 +42,80 @@ if ($LegacyProfile) {
     $legacyHash = (Get-FileHash -LiteralPath $legacyDefault).Hash
 }
 
-$installed = Start-Process -FilePath $installerPath -ArgumentList '--quiet' -PassThru
-if (-not $installed.WaitForExit(240000)) {
-    $installed.Kill()
-    throw 'Setup did not finish in four minutes.'
+function Save-NativeDiagnostics {
+    $logRoot = Join-Path $env:TEMP 'rime.shuangpin_link'
+    if (-not (Test-Path -LiteralPath $logRoot -PathType Container)) { return }
+    $logs = Get-ChildItem -LiteralPath $logRoot -File -Filter 'rime.shuangpin_link.*' |
+        Where-Object { $_.Name -match '\.log(?:\.|$)' -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 4
+    & {
+        foreach ($log in $logs) {
+            "--- $($log.Name) ---"
+            Get-Content -LiteralPath $log.FullName -Tail 100
+        }
+    } | Set-Content -LiteralPath (Join-Path $output 'native-deployment.txt')
 }
-if ($installed.ExitCode -ne 0) { throw "Setup failed ($($installed.ExitCode))." }
 
-$native = (Get-ItemProperty -LiteralPath 'HKLM:/SOFTWARE/ShuangpinLink/IME').InstallDir
-$dll = (Get-Item -LiteralPath (Join-Path $native 'ShuangpinIme64.dll')).FullName
-$files = Get-ChildItem -LiteralPath $native -File -Recurse
-$files | Select-Object Name, @{Name='Description';Expression={$_.VersionInfo.FileDescription}} |
-    Format-Table -AutoSize | Out-String -Width 170 | Set-Content -LiteralPath (Join-Path $output 'installed-files.txt')
-$unexpected = $files | Where-Object {
-    $_.Extension -in '.exe', '.dll', '.ime' -and (
-        $_.Name -match 'weasel' -or $_.VersionInfo.FileDescription -match '小狼毫|Weasel' -or
-        $_.VersionInfo.ProductName -match '小狼毫|Weasel'
-    )
-}
-if ($unexpected) { throw "Stock IME executable identity found: $($unexpected.Name -join ', ')" }
-$legacyTip = 'HKLM:/SOFTWARE/Microsoft/CTF/TIP/{A3F4CDED-B1E9-41EE-9CA6-7B4D0DE6CB0A}'
-if (Test-Path -LiteralPath $legacyTip) { throw 'The installer registered the legacy Windows IME profile.' }
-
-$rime = Join-Path $env:APPDATA 'ShuangpinLink/Rime'
-if ($LegacyProfile) {
-    if (-not (Test-Path -LiteralPath (Join-Path $rime 'legacy-dictionary-migrated'))) {
-        throw 'Setup did not recognize the legacy 双拼互联 installation.'
+try {
+    $setupOut = Join-Path $output 'setup-output.txt'
+    $setupError = Join-Path $output 'setup-error.txt'
+    $installed = Start-Process -FilePath $installerPath -ArgumentList '--quiet' -PassThru `
+        -RedirectStandardOutput $setupOut -RedirectStandardError $setupError
+    if (-not $installed.WaitForExit(240000)) {
+        $installed.Kill()
+        throw 'Setup did not finish in four minutes.'
     }
-    if ((Get-FileHash -LiteralPath $legacyDefault).Hash -ne $legacyHash) {
-        throw 'Setup changed the legacy input data rather than deploying the product profile separately.'
+    if ($installed.ExitCode -ne 0) {
+        Get-Content -LiteralPath $setupError -Tail 40 | ForEach-Object { Write-Host $_ }
+        throw "Setup failed ($($installed.ExitCode))."
     }
-}
-$compiled = Join-Path $rime 'build/default.yaml'
-$deadline = [DateTime]::UtcNow.AddSeconds(45)
-while (-not (Test-Path -LiteralPath $compiled) -and [DateTime]::UtcNow -lt $deadline) {
-    Start-Sleep -Milliseconds 500
-}
-$default = Get-Content -Raw -LiteralPath $compiled
-$schemes = [regex]::Matches($default, '(?m)^ *- schema: *(\w+) *\r?$').Groups |
-    Where-Object Name -eq '1' | Select-Object -ExpandProperty Value
-if (($schemes -join ',') -ne 'double_pinyin_mspy,rime_ice') {
-    throw "Unexpected deployed scheme list: $($schemes -join ', ')"
-}
-$schemes | Set-Content -LiteralPath (Join-Path $output 'deployed-schemes.txt')
 
-dotnet (Join-Path $output 'editor-build/Editor.dll') $output $dll 2>&1 |
-    Tee-Object -FilePath (Join-Path $output 'editor.txt')
+    $native = (Get-ItemProperty -LiteralPath 'HKLM:/SOFTWARE/ShuangpinLink/IME').InstallDir
+    $dll = (Get-Item -LiteralPath (Join-Path $native 'ShuangpinIme64.dll')).FullName
+    $files = Get-ChildItem -LiteralPath $native -File -Recurse
+    $files | Select-Object Name, @{Name='Description';Expression={$_.VersionInfo.FileDescription}} |
+        Format-Table -AutoSize | Out-String -Width 170 | Set-Content -LiteralPath (Join-Path $output 'installed-files.txt')
+    $unexpected = $files | Where-Object {
+        $_.Extension -in '.exe', '.dll', '.ime' -and (
+            $_.Name -match 'weasel' -or $_.VersionInfo.FileDescription -match '小狼毫|Weasel' -or
+            $_.VersionInfo.ProductName -match '小狼毫|Weasel'
+        )
+    }
+    if ($unexpected) { throw "Stock IME executable identity found: $($unexpected.Name -join ', ')" }
+    $legacyTip = 'HKLM:/SOFTWARE/Microsoft/CTF/TIP/{A3F4CDED-B1E9-41EE-9CA6-7B4D0DE6CB0A}'
+    if (Test-Path -LiteralPath $legacyTip) { throw 'The installer registered the legacy Windows IME profile.' }
 
-$selected = Get-Content -Raw -LiteralPath (Join-Path $rime 'user.yaml')
-if ($selected -notmatch '(?m)^ +previously_selected_schema: rime_ice *\r?$') {
-    throw 'The keyboard scheme picker did not save the selection of 普通拼音.'
+    $rime = Join-Path $env:APPDATA 'ShuangpinLink/Rime'
+    if ($LegacyProfile) {
+        if (-not (Test-Path -LiteralPath (Join-Path $rime 'legacy-dictionary-migrated'))) {
+            throw 'Setup did not recognize the legacy 双拼互联 installation.'
+        }
+        if ((Get-FileHash -LiteralPath $legacyDefault).Hash -ne $legacyHash) {
+            throw 'Setup changed the legacy input data rather than deploying the product profile separately.'
+        }
+    }
+    $compiled = Join-Path $rime 'build/default.yaml'
+    $deadline = [DateTime]::UtcNow.AddSeconds(45)
+    while (-not (Test-Path -LiteralPath $compiled) -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 500
+    }
+    $default = Get-Content -Raw -LiteralPath $compiled
+    $schemes = [regex]::Matches($default, '(?m)^ *- schema: *(\w+) *\r?$').Groups |
+        Where-Object Name -eq '1' | Select-Object -ExpandProperty Value
+    if (($schemes -join ',') -ne 'double_pinyin_mspy,rime_ice') {
+        throw "Unexpected deployed scheme list: $($schemes -join ', ')"
+    }
+    $schemes | Set-Content -LiteralPath (Join-Path $output 'deployed-schemes.txt')
+
+    dotnet (Join-Path $output 'editor-build/Editor.dll') $output $dll 2>&1 |
+        Tee-Object -FilePath (Join-Path $output 'editor.txt')
+
+    $selected = Get-Content -Raw -LiteralPath (Join-Path $rime 'user.yaml')
+    if ($selected -notmatch '(?m)^ +previously_selected_schema: rime_ice *\r?$') {
+        throw 'The keyboard scheme picker did not save the selection of 普通拼音.'
+    }
+} catch {
+    try { Save-NativeDiagnostics }
+    catch { Write-Warning ("Could not collect the native deployment diagnostics: " + $_.Exception.Message) }
+    throw
 }

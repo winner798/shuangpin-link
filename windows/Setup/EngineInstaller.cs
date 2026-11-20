@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Microsoft.Win32;
@@ -39,10 +40,10 @@ static class EngineInstaller
         return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    internal static string EnsureInstalled(string source)
+    internal static string EnsureInstalled(ZipArchive archive)
     {
         if (InstalledCurrent() is { } current) return current;
-        if (IsElevated()) InstallMachineFiles(source);
+        if (IsElevated()) InstallMachineFiles(archive);
         else
         {
             // The elevated worker reads the installer embedded in its own executable.
@@ -63,7 +64,7 @@ static class EngineInstaller
         return IsRegistered(directory, is64: true) && IsRegistered(directory, is64: false) ? directory : null;
     }
 
-    internal static void InstallMachineFiles(string source)
+    internal static void InstallMachineFiles(ZipArchive archive)
     {
         if (!IsElevated()) throw new UnauthorizedAccessException("安装系统输入组件需要管理员权限。");
         using var installLock = new Mutex(false, @"Global\ShuangpinLink.EngineInstaller");
@@ -77,12 +78,7 @@ static class EngineInstaller
             if (InstalledCurrent() is not null) return;
             var previous = InputPaths.InstalledEngine();
             var destination = Path.Combine(InputPaths.EngineRoot, Version + "-" + Guid.NewGuid().ToString("N")[..8]);
-            foreach (string path in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-            {
-                var target = Path.Combine(destination, Path.GetRelativePath(source, path));
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                File.Copy(path, target);
-            }
+            ExtractEngine(archive, destination);
             File.WriteAllText(Path.Combine(destination, "engine-version.txt"), Version);
             try
             {
@@ -111,6 +107,21 @@ static class EngineInstaller
         {
             try { installLock.ReleaseMutex(); }
             catch (ApplicationException) { }
+        }
+    }
+
+    static void ExtractEngine(ZipArchive archive, string directory)
+    {
+        // Extract the privileged payload directly into Program Files, without staging DLLs in a writable temp folder.
+        const string prefix = "ime/";
+        string root = directory + Path.DirectorySeparatorChar;
+        foreach (var entry in archive.Entries.Where(file => file.FullName.StartsWith(prefix, StringComparison.Ordinal)
+            && !string.IsNullOrEmpty(file.Name)))
+        {
+            string target = Path.GetFullPath(Path.Combine(directory, entry.FullName[prefix.Length..]));
+            if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("系统输入组件路径无效。");
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            entry.ExtractToFile(target);
         }
     }
 
@@ -146,6 +157,9 @@ static class EngineInstaller
         if (!InstallLayoutOrTip("0x0804:" + InputPaths.ClassId + InputPaths.ProfileId, 0))
             throw new InvalidOperationException("无法在当前用户的 Windows 输入法列表中启用双拼互联。");
         if (hideLegacy)
-            InstallLayoutOrTip("0x0804:" + LegacyIds + ";0x0404:" + LegacyIds, RemoveInputProfile);
+        {
+            InstallLayoutOrTip("0x0804:" + LegacyIds, RemoveInputProfile);
+            InstallLayoutOrTip("0x0404:" + LegacyIds, RemoveInputProfile);
+        }
     }
 }
