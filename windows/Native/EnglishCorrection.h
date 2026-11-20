@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cwctype>
 #include <inputscope.h>
+#include <richedit.h>
 #include <string_view>
 
 #include "EditSession.h"
@@ -25,6 +26,16 @@ inline void Trace(const char* step, HRESULT code = S_OK, long value = 0) {
 
 inline bool IsLetter(wchar_t c) {
   return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
+}
+
+inline std::wstring_view WordAtEnd(std::wstring_view text, bool atDocumentStart) {
+  size_t start = text.size();
+  while (start && IsLetter(text[start - 1]))
+    --start;
+  if (text.size() - start < 3 || text.size() - start > 24 ||
+      (start ? !iswspace(text[start - 1]) : !atDocumentStart))
+    return {};
+  return text.substr(start);
 }
 
 inline std::wstring CorrectedWord(std::wstring_view word) {
@@ -117,6 +128,48 @@ inline void CorrectCompositionCommit(ITfContext* context, TfEditCookie edit, std
   }
 }
 
+inline bool CorrectInRichEdit() {
+  HWND focus = GetFocus();
+  wchar_t name[128]{};
+  constexpr wchar_t wrappedRichEdit[] = L"WindowsForms10.RichEdit";
+  DWORD process = 0;
+  if (!focus || !GetWindowThreadProcessId(focus, &process) || process != GetCurrentProcessId() ||
+      !GetClassNameW(focus, name, ARRAYSIZE(name)) ||
+      (_wcsnicmp(name, L"RichEdit", 8) != 0 &&
+       _wcsnicmp(name, wrappedRichEdit, ARRAYSIZE(wrappedRichEdit) - 1) != 0) ||
+      (GetWindowLongPtrW(focus, GWL_STYLE) & (ES_PASSWORD | ES_READONLY)) ||
+      SendMessageW(focus, EM_GETPASSWORDCHAR, 0, 0) != 0) {
+    Trace("native editor excluded");
+    return false;
+  }
+
+  CHARRANGE selection{};
+  SendMessageW(focus, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&selection));
+  if (selection.cpMin != selection.cpMax || selection.cpMin <= 0)
+    return false;
+  wchar_t buffer[33]{};
+  const LONG start = selection.cpMin > 32 ? selection.cpMin - 32 : 0;
+  TEXTRANGEW range{{start, selection.cpMin}, buffer};
+  const LRESULT length = SendMessageW(focus, EM_GETTEXTRANGE, 0, reinterpret_cast<LPARAM>(&range));
+  Trace("native range length", S_OK, static_cast<long>(length));
+  if (length <= 0 || length > 32)
+    return false;
+  auto word = WordAtEnd(std::wstring_view(buffer, static_cast<size_t>(length)), start == 0);
+  auto replacement = CorrectedWord(word);
+  if (replacement.empty() || GetFocus() != focus)
+    return false;
+
+  replacement.push_back(L' ');
+  CHARRANGE wordRange{selection.cpMin - static_cast<LONG>(word.size()), selection.cpMin};
+  SendMessageW(focus, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&wordRange));
+  if (GetFocus() != focus) {
+    SendMessageW(focus, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&selection));
+    return false;
+  }
+  SendMessageW(focus, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(replacement.c_str()));
+  return true;
+}
+
 class SpaceEdit final : public CEditSession {
  public:
   SpaceEdit(WeaselTSF* service, ITfContext* context)
@@ -125,8 +178,11 @@ class SpaceEdit final : public CEditSession {
   STDMETHODIMP DoEditSession(TfEditCookie edit) override {
     return CorrectPreviousWord(edit) ? S_OK : S_FALSE;
   }
+  bool UseRichEditFallback() const { return emptyStore_; }
 
  private:
+  bool emptyStore_ = false;
+
   bool CorrectPreviousWord(TfEditCookie edit) {
     TF_SELECTION selection{};
     ULONG count = 0;
@@ -158,14 +214,12 @@ class SpaceEdit final : public CEditSession {
     Trace("read range", result, length);
     if (FAILED(result))
       return false;
-    ULONG start = length;
-    while (start && IsLetter(buffer[start - 1]))
-      --start;
-    if (length - start < 3 || length - start > 24 ||
-        (start && !iswspace(buffer[start - 1])) || (!start && length == ARRAYSIZE(buffer)))
+    if (!length) {
+      emptyStore_ = true;
       return false;
+    }
 
-    std::wstring_view word(buffer + start, length - start);
+    auto word = WordAtEnd(std::wstring_view(buffer, length), length < ARRAYSIZE(buffer));
     auto replacement = CorrectedWord(word);
     if (replacement.empty())
       return false;
@@ -201,11 +255,13 @@ inline bool EnabledForSpace(LPARAM data) {
 
 inline bool HandleSpace(WeaselTSF* service, ITfContext* context, TfClientId id) {
   com_ptr<ITfEditSession> edit;
-  edit.Attach(new SpaceEdit(service, context));
+  auto* session = new SpaceEdit(service, context);
+  edit.Attach(session);
   HRESULT result = S_FALSE;
   const HRESULT request = context->RequestEditSession(id, edit, TF_ES_SYNC | TF_ES_READWRITE, &result);
   Trace("request edit", request, result);
-  return SUCCEEDED(request) && result == S_OK;
+  return SUCCEEDED(request) && (result == S_OK || (result == S_FALSE &&
+         session->UseRichEditFallback() && CorrectInRichEdit()));
 }
 
 }  // namespace link_english
