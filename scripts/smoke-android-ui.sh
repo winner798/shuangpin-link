@@ -119,7 +119,14 @@ adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor.xml"
 grep -F 'text="你好"' "$output/android-editor.xml" >/dev/null
 
+# Prediction temporarily replaces the toolbar after a commit. Reopen the keyboard to clear it.
+adb shell input keyevent KEYCODE_BACK
+sleep 1
+adb shell input tap 200 300
+sleep 2
 adb shell input tap 134 1488
+sleep 1
+adb exec-out screencap -p > "$output/android-scheme-picker.png"
 adb shell uiautomator dump /sdcard/shuangpin-schemes.xml
 adb exec-out cat /sdcard/shuangpin-schemes.xml > "$output/android-schemes.xml"
 read -r scheme_x scheme_y < <(python3 - "$output/android-schemes.xml" <<'PY'
@@ -127,7 +134,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-rows = ET.parse(sys.argv[1]).findall('.//node[@checkable="true"]')
+rows = ET.parse(sys.argv[1]).findall('.//node[@class="android.widget.CheckedTextView"]')
 assert [row.get("text") for row in rows] == ["微软双拼", "普通拼音"]
 left, top, right, bottom = map(int, re.findall(r"\d+", rows[1].get("bounds")))
 print((left + right) // 2, (top + bottom) // 2)
