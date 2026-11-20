@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Globalization;
+using System.Text;
 using Microsoft.Win32;
 
 namespace ShuangpinLink;
@@ -10,6 +10,7 @@ internal static class RimeFiles
     static string UserDirectory => Registry.GetValue(@"HKEY_CURRENT_USER\Software\Rime\Weasel", "RimeUserDir", null) as string
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Rime");
     internal static string RestoreDirectory => Path.Combine(UserDirectory, "sync", "shuangpin-link-peer");
+    internal static bool LearningEnabled => LearningSettings.Enabled(UserDirectory);
     static string InstallDirectory =>
         Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Rime\Weasel", "InstallDir", null) as string
         ?? Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Rime\Weasel", "InstallDir", null) as string
@@ -89,8 +90,48 @@ internal static class RimeFiles
 
     internal static async Task SetLearning(bool enabled, CancellationToken token)
     {
-        await File.WriteAllTextAsync(Path.Combine(UserDirectory, "double_pinyin_mspy.custom.yaml"),
-            $"patch:\n  translator/enable_user_dict: {enabled.ToString().ToLower(CultureInfo.InvariantCulture)}\n", token);
-        await RunDeployer("/deploy", token);
+        var directory = UserDirectory;
+        Directory.CreateDirectory(directory);
+        List<(string Path, byte[]? Before, byte[] After)> edits = [];
+        foreach (var name in LearningSettings.SchemaFiles)
+        {
+            string path = Path.Combine(directory, name);
+            byte[]? before = File.Exists(path) ? await File.ReadAllBytesAsync(path, token) : null;
+            using var text = before is null ? null : new StreamReader(new MemoryStream(before));
+            string after = LearningSettings.WithLearning(text?.ReadToEnd(), enabled);
+            edits.Add((path, before, Encoding.UTF8.GetBytes(after)));
+        }
+
+        int written = 0;
+        try
+        {
+            foreach (var edit in edits)
+            {
+                await WriteAtomic(edit.Path, edit.After, token);
+                written++;
+            }
+            await RunDeployer("/deploy", token);
+        }
+        catch
+        {
+            foreach (var edit in edits.Take(written))
+            {
+                if (edit.Before is null) File.Delete(edit.Path);
+                else await WriteAtomic(edit.Path, edit.Before, CancellationToken.None);
+            }
+            if (written == edits.Count) await RunDeployer("/deploy", CancellationToken.None);
+            throw;
+        }
+    }
+
+    static async Task WriteAtomic(string path, byte[] contents, CancellationToken token)
+    {
+        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllBytesAsync(temporary, contents, token);
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { File.Delete(temporary); }
     }
 }

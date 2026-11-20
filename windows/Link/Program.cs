@@ -21,23 +21,24 @@ internal static class Program
     }
 }
 
-internal sealed class LinkWindow : Form
+internal sealed partial class LinkWindow : Form
 {
     static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ShuangpinLink", "state");
     static readonly string StateFile = Path.Combine(DataDirectory, "device.bin");
     static readonly UTF8Encoding Utf8 = new(false, true);
     const int ClipLimit = 64 * 1024;
     const int DictionaryLimit = 8 * 1024 * 1024;
-    readonly TextBox server = new() { Width = 370, Text = "https://1.15.223.20/ime-sync/" };
-    readonly TextBox setupCode = new() { Width = 370, UseSystemPasswordChar = true, PlaceholderText = "服务器启用码" };
-    readonly PictureBox qr = new() { Width = 224, Height = 224, SizeMode = PictureBoxSizeMode.Zoom, Visible = false };
-    readonly Label status = new() { AutoSize = true, MaximumSize = new Size(420, 0), Text = "尚未绑定服务器" };
+    readonly TextBox server = new() { Text = "https://1.15.223.20/ime-sync/" };
+    readonly TextBox setupCode = new() { UseSystemPasswordChar = true };
+    readonly PictureBox qr = new() { Size = new Size(204, 204), SizeMode = PictureBoxSizeMode.Zoom, TabStop = false };
+    readonly Label status = new() { AutoSize = true };
+    readonly Label connectionStatus = new() { AutoSize = true, Text = "尚未绑定服务器" };
     readonly CheckBox pause = new() { AutoSize = true, Text = "暂停剪贴板同步" };
     readonly CheckBox share = new() { AutoSize = true, Text = "共享个人词库", Checked = true };
     readonly CheckBox learning = new() { AutoSize = true, Text = "学习选词习惯", Checked = true };
-    readonly Button checkUpdate = new() { Text = "检查更新", AutoSize = true };
-    readonly Button cancelUpdate = new() { Text = "取消更新", AutoSize = true, Visible = false };
-    readonly Label updateStatus = new() { AutoSize = true, MaximumSize = new Size(400, 0), Text = $"当前版本 {WindowsUpdate.Current.VersionName}" };
+    readonly Button checkUpdate = new() { Text = "检查更新" };
+    readonly Button cancelUpdate = new() { Text = "取消更新", Visible = false };
+    readonly Label updateStatus = new() { AutoSize = true, Text = $"当前版本 {WindowsUpdate.Current.VersionName}" };
     readonly NotifyIcon tray = new() { Text = "双拼互联", Icon = SystemIcons.Application, Visible = true };
     readonly System.Windows.Forms.Timer qrExpiry = new() { Interval = 5 * 60 * 1000 };
     readonly bool startHidden;
@@ -48,6 +49,7 @@ internal sealed class LinkWindow : Form
     bool updating;
     bool exiting;
     bool busy;
+    bool learningEnabled = true;
     bool applying;
     uint appliedSequence;
     long revision;
@@ -63,36 +65,26 @@ internal sealed class LinkWindow : Form
     internal LinkWindow(bool startHidden)
     {
         this.startHidden = startHidden;
-        Text = "双拼互联";
-        ClientSize = new Size(450, 545);
-        MinimumSize = new Size(470, 500);
-        Font = new Font("Microsoft YaHei UI", 10f);
-        BackColor = SystemColors.Window;
-        var content = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(18) };
-        var actions = new FlowLayoutPanel { AutoSize = true };
-        var dictionaryActions = new FlowLayoutPanel { AutoSize = true };
-        var updateActions = new FlowLayoutPanel { AutoSize = true };
-        actions.Controls.AddRange([Button("启用或恢复", Connect), Button("显示配对码", Invite), Button("解除手机配对", ResetPeer)]);
-        dictionaryActions.Controls.AddRange([Button("立即同步词库", SyncNow), Button("清空本机词库", ClearDictionary)]);
-        updateActions.Controls.AddRange([checkUpdate, cancelUpdate]);
+        try { session = LoadSession(); }
+        catch (Exception error) when (error is IOException or CryptographicException or JsonException)
+        { status.Text = "设备设置无法读取，请用服务器启用码恢复。"; }
+        try { learningEnabled = RimeFiles.LearningEnabled; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { status.Text = "无法读取词库的学习设置。"; }
+        if (session is { } device) server.Text = device.Server;
+
+        BuildLayout();
         checkUpdate.Click += async (_, _) => await CheckForUpdates();
         cancelUpdate.Click += (_, _) => updateRequest?.Cancel();
-        content.Controls.AddRange([new Label { Text = "双拼互联", Font = new Font(Font.FontFamily, 19f, FontStyle.Bold), AutoSize = true },
-            status, new Label { Text = "同步服务器", AutoSize = true }, server, setupCode, actions, pause, share, learning,
-            dictionaryActions, updateActions, updateStatus, qr]);
-        Controls.Add(content);
 
         tray.ContextMenuStrip = new ContextMenuStrip();
         tray.ContextMenuStrip.Items.Add("打开设置", null, (_, _) => Reveal());
-        tray.ContextMenuStrip.Items.Add("检查更新", null, async (_, _) => { Reveal(); await CheckForUpdates(); });
+        tray.ContextMenuStrip.Items.Add("检查更新", null, async (_, _) => { Reveal(); updatesTab.Checked = true; await CheckForUpdates(); });
         tray.ContextMenuStrip.Items.Add("暂停或恢复同步", null, (_, _) => pause.Checked = !pause.Checked);
         tray.ContextMenuStrip.Items.Add("退出", null, (_, _) => { exiting = true; Close(); });
         tray.DoubleClick += (_, _) => Reveal();
         qrExpiry.Tick += (_, _) => ClearQr();
 
-        try { session = LoadSession(); }
-        catch (Exception error) when (error is IOException or CryptographicException or JsonException)
-        { status.Text = "设备设置无法读取，请用服务器启用码恢复。"; }
         UpdateControls();
         pause.CheckedChanged += async (_, _) => await RunAction(async () =>
         {
@@ -109,18 +101,33 @@ internal sealed class LinkWindow : Form
             SaveSession();
             await Restart();
         });
-        learning.CheckedChanged += async (_, _) => await RunAction(async () =>
+        learning.CheckedChanged += async (_, _) =>
         {
             if (updating) return;
-            await dictionaryGate.WaitAsync();
-            try { await RimeFiles.SetLearning(learning.Checked, CancellationToken.None); }
-            finally { dictionaryGate.Release(); }
-        });
+            if (busy)
+            {
+                UpdateControls();
+                return;
+            }
+            bool enabled = learning.Checked;
+            await RunAction(async () =>
+            {
+                await dictionaryGate.WaitAsync();
+                try
+                {
+                    await RimeFiles.SetLearning(enabled, CancellationToken.None);
+                    learningEnabled = enabled;
+                    status.Text = enabled ? "两种输入方案的选词学习已启用。" : "两种输入方案的选词学习已暂停。";
+                }
+                finally { dictionaryGate.Release(); }
+            });
+        };
     }
 
-    Button Button(string label, Func<Task> action)
+    Button ActionButton(string label, Func<Task> action, bool primary = false)
     {
-        var button = new Button { Text = label, AutoSize = true };
+        var button = new Button { Text = label };
+        StyleButton(button, primary);
         button.Click += async (_, _) => await RunAction(action);
         return button;
     }
@@ -133,6 +140,7 @@ internal sealed class LinkWindow : Form
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
         { status.Text = "凭据无效或已撤销。"; }
         catch (HttpRequestException) { status.Text = "连接失败，请检查服务器地址或配对状态。"; }
+        catch (InvalidDataException error) { status.Text = error.Message; }
         catch (Exception error) when (error is ArgumentException or IOException or InvalidOperationException or CryptographicException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         { status.Text = "操作失败。请检查输入法安装和设备设置。"; }
         catch (Exception error) when (error is OperationCanceledException or TimeoutException) { status.Text = "操作超时，请稍后重试。"; }
@@ -227,7 +235,7 @@ internal sealed class LinkWindow : Form
             try
             {
                 var clip = await relay.Send<Clip>(HttpMethod.Get, $"clip?after={revision}&wait=20", token);
-                if (clip is null) { status.Text = "剪贴板同步在线"; continue; }
+                if (clip is null) { connectionStatus.Text = "剪贴板同步在线"; continue; }
                 if (clip.Envelope is not null && pending is null && started == GetClipboardSequenceNumber())
                 {
                     string text = Utf8.GetString(Relay.Open(key, "clip", clip.Envelope, ClipLimit));
@@ -239,11 +247,11 @@ internal sealed class LinkWindow : Form
                     }
                 }
                 revision = clip.Revision;
-                status.Text = "剪贴板同步在线";
+                connectionStatus.Text = "剪贴板同步在线";
             }
             catch (Exception error) when (Retryable(error, token))
             {
-                status.Text = error is HttpRequestException { StatusCode: HttpStatusCode.Unauthorized }
+                connectionStatus.Text = error is HttpRequestException { StatusCode: HttpStatusCode.Unauthorized }
                     ? "设备已解绑，请重新配对。" : "同步暂不可用，正在重试。";
                 await Task.Delay(1500, token);
             }
@@ -292,12 +300,6 @@ internal sealed class LinkWindow : Form
     async Task CheckForUpdates()
     {
         if (updateRequest is not null) return;
-        if (session is not { } device)
-        {
-            updateStatus.Text = "请先绑定服务器，再检查更新。";
-            return;
-        }
-
         WindowsUpdate.CleanPreviousDownloads();
         using var request = new CancellationTokenSource();
         updateRequest = request;
@@ -308,8 +310,7 @@ internal sealed class LinkWindow : Form
         try
         {
             updateStatus.Text = "正在检查更新…";
-            var relay = new Relay(device.Server, device.Device.Token);
-            var release = await WindowsUpdate.Check(relay, request.Token);
+            var release = await WindowsUpdate.Check(request.Token);
             if (release is null)
             {
                 updateStatus.Text = $"当前版本 {WindowsUpdate.Current.VersionName} 已是最新版本。";
@@ -322,7 +323,7 @@ internal sealed class LinkWindow : Form
                     Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
             updateStatus.Text = $"正在下载并校验 {version}…";
-            installer = await WindowsUpdate.Download(relay, release, request.Token);
+            installer = await WindowsUpdate.Download(release, request.Token);
             request.Token.ThrowIfCancellationRequested();
             updateStatus.Text = "安装包校验通过。";
             if (MessageBox.Show(this, $"现在安装 {version}？安装时双拼互联会暂时退出。",
@@ -338,10 +339,8 @@ internal sealed class LinkWindow : Form
             using var process = Process.Start(start) ?? throw new InvalidOperationException("无法启动更新安装程序。");
             launched = true;
         }
-        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
-        { updateStatus.Text = "服务器绑定已失效，请重新绑定后检查更新。"; }
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)
-        { updateStatus.Text = "服务器暂时没有可用的更新包。"; }
+        { updateStatus.Text = "暂时没有可用的更新包。"; }
         catch (HttpRequestException)
         { updateStatus.Text = "无法连接更新服务，请检查网络后重试。"; }
         catch (Exception error) when (error is InvalidDataException or JsonException or CryptographicException or FormatException)
@@ -460,9 +459,10 @@ internal sealed class LinkWindow : Form
             using var image = new QRCode(qrData);
             ClearQr();
             qr.Image = image.GetGraphic(5);
-            qr.Visible = true;
+            qrBox.Visible = true;
+            interopPage.ScrollControlIntoView(qrBox);
             qrExpiry.Start();
-            status.Text = "在安卓的互联设置中扫码，配对码 5 分钟内有效。";
+            status.Text = "配对码已生成。";
         }
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Conflict)
         { status.Text = "手机已配对。如需更换，请先解除原配对。"; }
@@ -471,7 +471,7 @@ internal sealed class LinkWindow : Form
     void ClearQr()
     {
         qrExpiry.Stop();
-        qr.Visible = false;
+        qrBox.Visible = false;
         qr.Image?.Dispose();
         qr.Image = null;
     }
@@ -498,7 +498,14 @@ internal sealed class LinkWindow : Form
     {
         updating = true;
         if (session is { } device)
-        { pause.Checked = device.Paused; share.Checked = device.ShareDictionary; }
+        {
+            pause.Checked = device.Paused;
+            share.Checked = device.ShareDictionary;
+            if (device.Paused) connectionStatus.Text = "剪贴板同步已暂停";
+            else if (connectionStatus.Text is "尚未绑定服务器" or "剪贴板同步已暂停")
+                connectionStatus.Text = "已绑定服务器，正在连接";
+        }
+        learning.Checked = learningEnabled;
         pause.Enabled = share.Enabled = session is not null;
         if (session is not null && server.Text.Length == 0) server.Text = session.Server;
         updating = false;

@@ -3,26 +3,41 @@ package com.osfans.trime.link
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.ComponentName
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
-import android.widget.CheckBox
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.withResumed
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.osfans.trime.BuildConfig
-import com.osfans.trime.core.data.UserDataManager
 import com.osfans.trime.daemon.RimeDaemon
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -30,18 +45,45 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import kotlin.math.roundToInt
 
 class LinkActivity : ComponentActivity() {
     private lateinit var settings: LinkSettings
     private lateinit var status: TextView
-    private lateinit var pause: CheckBox
-    private lateinit var share: CheckBox
-    private lateinit var learning: CheckBox
+    private lateinit var keyboardStatus: TextView
+    private lateinit var dictionaryStatus: TextView
+    private lateinit var keyboardAction: Button
+    private lateinit var scanAction: Button
+    private lateinit var removePairAction: Button
+    private lateinit var syncAction: Button
+    private lateinit var pause: SwitchCompat
+    private lateinit var share: SwitchCompat
+    private lateinit var learning: SwitchCompat
     private lateinit var updates: LinkUpdates
     private lateinit var updateStatus: TextView
     private lateinit var checkUpdate: Button
     private lateinit var installUpdate: Button
     private var verifiedApk: File? = null
+    private var bindingPreferences = false
+
+    private data class Palette(
+        val surface: Int, val panel: Int, val text: Int, val muted: Int, val accent: Int,
+        val onAccent: Int, val outline: Int, val disabled: Int,
+    )
+
+    private val dark get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    private val colors by lazy {
+        if (dark) {
+            Palette(0xFF172127.toInt(), 0xFF202C33.toInt(), 0xFFF1F6F7.toInt(), 0xFFA4B6BF.toInt(),
+                0xFF83DFC8.toInt(), 0xFF112420.toInt(), 0xFF394952.toInt(), 0xFF647780.toInt())
+        } else {
+            Palette(0xFFF3F6F8.toInt(), Color.WHITE, 0xFF17232B.toInt(), 0xFF586A75.toInt(),
+                0xFF007F78.toInt(), Color.WHITE, 0xFFD6E1E6.toInt(), 0xFF7D8B93.toInt())
+        }
+    }
+
+    private val inputMethodManager get() = getSystemService(InputMethodManager::class.java)
     private val scanner = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let(::pair)
     }
@@ -53,79 +95,198 @@ class LinkActivity : ComponentActivity() {
         }
     }
 
-    override fun onCreate(state: Bundle?) {
-        super.onCreate(state)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         settings = LinkSettings(this)
         if (!settings.unlocked) { finish(); return }
         updates = LinkUpdates(applicationContext)
+
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
         val pane = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            val pad = (24 * resources.displayMetrics.density).toInt()
-            setPadding(pad, pad, pad, pad)
         }
-        val title = TextView(this).apply { text = "双拼互联"; textSize = 26f }
-        status = TextView(this).apply { textSize = 16f }
-        pane.addView(title)
-        pane.addView(status)
-        pane.addView(Button(this).apply {
-            text = "扫描电脑配对码"
-            setOnClickListener {
+        pane.addView(TextView(this).apply {
+            text = "双拼互联"
+            textSize = 32f
+            setTextColor(colors.text)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            isAccessibilityHeading = true
+            setPadding(dp(4), dp(6), dp(4), dp(18))
+        }, row())
+
+        section(pane, "键盘") {
+            keyboardStatus = addStatus(this, "")
+            keyboardAction = addAction(this, "启用双拼互联", primary = true) { openKeyboardSetup() }
+            addStatus(this, "打字时点「切换方案」，选择微软双拼或普通拼音。", top = 10)
+        }
+
+        section(pane, "设备互通") {
+            status = addStatus(this, "")
+            scanAction = addAction(this, "扫描电脑配对码", primary = true) {
                 scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                    .setPrompt("扫描 Windows 端的配对二维码").setBeepEnabled(false).setOrientationLocked(false))
+                    .setPrompt("扫描电脑上的配对二维码").setBeepEnabled(false).setOrientationLocked(false))
             }
-        })
-        pause = addSwitch(pane, "暂停剪贴板同步", "paused", false)
-        share = addSwitch(pane, "共享个人词库", "share", true)
-        learning = addSwitch(pane, "学习选词习惯", "learning", true)
-        pane.addView(Button(this).apply {
-            text = "立即同步个人词库"
-            setOnClickListener {
-                if (settings.device() != null && settings.prefs.getBoolean("share", true)) {
-                    settings.prefs.edit().putLong("syncNow", System.currentTimeMillis()).apply()
-                    status.text = "已请求同步。输入法在线时会处理。"
-                }
-            }
-        })
-        pane.addView(Button(this).apply {
-            text = "清空本机个人词库"
-            setOnClickListener {
-                AlertDialog.Builder(this@LinkActivity)
-                    .setMessage("清空手机学到的词条和词频，并关闭手机的共享词库？电脑上的词库仍可继续使用。")
-                    .setNegativeButton("取消", null)
-                    .setPositiveButton("清空") { _, _ -> clearLearning() }.show()
-            }
-        })
-        pane.addView(Button(this).apply {
-            text = "移除此手机的配对信息"
-            setOnClickListener {
+            pause = addSwitch(this, "暂停剪贴板同步", "paused", false)
+            removePairAction = addAction(this, "移除手机配对") {
                 AlertDialog.Builder(this@LinkActivity).setMessage("移除后，请同时在电脑上解除手机配对。")
                     .setNegativeButton("取消", null).setPositiveButton("移除") { _, _ ->
                         settings.forget()
                         refresh()
                     }.show()
             }
-        })
-        updateStatus = TextView(this).apply { text = "当前版本 ${BuildConfig.VERSION_NAME}" }
-        checkUpdate = Button(this).apply {
-            text = "检查更新"
-            setOnClickListener { checkForUpdate() }
         }
-        installUpdate = Button(this).apply {
-            text = "安装更新"
-            visibility = View.GONE
-            setOnClickListener { installVerifiedUpdate() }
+
+        section(pane, "个人词库") {
+            learning = addSwitch(this, "学习选词习惯", "learning", true)
+            share = addSwitch(this, "跨设备共享词库", "share", true)
+            syncAction = addAction(this, "立即同步词库") {
+                settings.prefs.edit().putLong("syncNow", System.currentTimeMillis()).apply()
+                showDictionaryStatus("已请求同步。输入法在线时会处理。")
+            }
+            addAction(this, "清空本机词库") {
+                AlertDialog.Builder(this@LinkActivity)
+                    .setTitle("清空本机词库？")
+                    .setMessage("这会清除手机学到的词条和词频，并关闭手机上的词库共享。")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("清空") { _, _ -> clearLearning() }.show()
+            }
+            dictionaryStatus = addStatus(this, "", top = 10).apply { visibility = View.GONE }
         }
-        pane.addView(updateStatus)
-        pane.addView(checkUpdate)
-        pane.addView(installUpdate)
-        state?.getString("verifiedUpdateApk")?.let(updates::cachedApk)?.let(::showVerifiedApk)
-        pane.addView(Button(this).apply {
-            text = "关闭"
-            setOnClickListener { finish() }
-        })
-        setContentView(ScrollView(this).apply { addView(pane) })
+
+        section(pane, "软件更新") {
+            updateStatus = addStatus(this, "当前版本 ${BuildConfig.VERSION_NAME}")
+            checkUpdate = addAction(this, "检查更新") { checkForUpdate() }
+            installUpdate = addAction(this, "安装更新", primary = true) { installVerifiedUpdate() }
+            installUpdate.visibility = View.GONE
+        }
+        savedInstanceState?.getString("verifiedUpdateApk")?.let(updates::cachedApk)?.let(::showVerifiedApk)
+
+        val wrap = FrameLayout(this)
+        val wideWidth = if (resources.configuration.screenWidthDp >= 640) dp(584) else MATCH_PARENT
+        wrap.addView(pane, FrameLayout.LayoutParams(wideWidth, WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        val scroll = ScrollView(this).apply {
+            setBackgroundColor(colors.surface)
+            clipToPadding = false
+            isFillViewport = true
+            addView(wrap)
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(scroll) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            view.updatePadding(left = bars.left + dp(17), top = bars.top + dp(14),
+                right = bars.right + dp(17), bottom = bars.bottom + dp(10))
+            insets
+        }
+        setContentView(scroll)
         refresh()
+        refreshKeyboard()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::keyboardStatus.isInitialized) refreshKeyboard()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && ::keyboardStatus.isInitialized) refreshKeyboard()
+    }
+
+    private fun keyboardIsEnabled() = inputMethodManager?.enabledInputMethodList?.any { it.packageName == packageName } == true
+
+    private fun refreshKeyboard() {
+        val enabled = keyboardIsEnabled()
+        val selected = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            ?.let(ComponentName::unflattenFromString)?.packageName == packageName
+        keyboardStatus.text = when {
+            selected -> "已设为当前键盘"
+            enabled -> "已启用，请在系统列表里选择双拼互联。"
+            else -> "在系统键盘列表中启用双拼互联。"
+        }
+        keyboardAction.text = when {
+            selected -> "更换当前键盘"
+            enabled -> "选择双拼互联键盘"
+            else -> "打开系统键盘设置"
+        }
+    }
+
+    private fun openKeyboardSetup() {
+        if (keyboardIsEnabled()) {
+            inputMethodManager?.showInputMethodPicker()
+        } else {
+            try {
+                startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+            } catch (_: ActivityNotFoundException) {
+                keyboardStatus.text = "请从系统设置打开键盘管理。"
+            }
+        }
+    }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).roundToInt()
+
+    private fun row(top: Int = 0) = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+        topMargin = dp(top)
+    }
+
+    private fun rounded(fill: Int, radius: Int, stroke: Int? = null) = GradientDrawable().apply {
+        setColor(fill)
+        cornerRadius = dp(radius).toFloat()
+        stroke?.let { setStroke(dp(1), it) }
+    }
+
+    private fun section(pane: LinearLayout, title: String, content: LinearLayout.() -> Unit) {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val padding = dp(16)
+            setPadding(padding, padding, padding, padding)
+            background = rounded(colors.panel, 18, colors.outline)
+            addView(TextView(this@LinkActivity).apply {
+                text = title
+                textSize = 18f
+                setTextColor(colors.text)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                isAccessibilityHeading = true
+                setPadding(0, 0, 0, dp(8))
+            }, row())
+            content()
+        }
+        pane.addView(panel, row().apply { bottomMargin = dp(12) })
+    }
+
+    private fun addStatus(pane: LinearLayout, value: String, top: Int = 0) = TextView(this).apply {
+        text = value
+        textSize = 14f
+        setTextColor(colors.muted)
+        setLineSpacing(dp(2).toFloat(), 1f)
+        accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        pane.addView(this, row(top))
+    }
+
+    private fun showDictionaryStatus(message: String) {
+        dictionaryStatus.text = message
+        dictionaryStatus.visibility = View.VISIBLE
+    }
+
+    private fun addAction(pane: LinearLayout, label: String, primary: Boolean = false, action: () -> Unit) = Button(this).apply {
+        text = label
+        textSize = 14f
+        isAllCaps = false
+        minHeight = dp(48)
+        stateListAnimator = null
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        val textColor = if (primary) colors.onAccent else colors.accent
+        setTextColor(ColorStateList(arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
+            intArrayOf(colors.disabled, textColor)))
+        background = RippleDrawable(ColorStateList.valueOf(0x25007F78),
+            if (primary) rounded(colors.accent, 11) else rounded(colors.panel, 11, colors.outline), null)
+        backgroundTintList = null
+        setPadding(dp(12), dp(6), dp(12), dp(6))
+        setOnClickListener { action() }
+        pane.addView(this, row(8))
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -134,16 +295,11 @@ class LinkActivity : ComponentActivity() {
     }
 
     private fun checkForUpdate() {
-        val device = settings.device()
-        if (device == null) {
-            updateStatus.text = "请先和电脑配对，再检查更新。"
-            return
-        }
         lifecycleScope.launch {
             checkUpdate.isEnabled = false
             updateStatus.text = "正在检查更新…"
             try {
-                val release = updates.check(LinkHttp(device.server, device.token))
+                val release = updates.check()
                 updateStatus.text = if (release == null) {
                     "已是最新版本 ${BuildConfig.VERSION_NAME}。"
                 } else {
@@ -154,15 +310,14 @@ class LinkActivity : ComponentActivity() {
                         .setTitle("更新到 ${release.versionName}")
                         .setMessage("下载完成后，可在系统安装界面确认更新。")
                         .setNegativeButton("取消", null)
-                        .setPositiveButton("下载") { _, _ -> downloadUpdate(device, release) }
+                        .setPositiveButton("下载") { _, _ -> downloadUpdate(release) }
                         .show()
                 }
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (error: LinkHttpError) {
                 updateStatus.text = when (error.code) {
-                    401 -> "配对已失效，请重新配对。"
-                    404 -> "服务器暂未发布更新。"
+                    404 -> "暂未发布更新。"
                     else -> "检查更新失败，请稍后重试。"
                 }
             } catch (_: UnsupportedLinkUpdate) {
@@ -177,17 +332,13 @@ class LinkActivity : ComponentActivity() {
         }
     }
 
-    private fun downloadUpdate(device: LinkDevice, release: LinkRelease) {
-        if (settings.device() != device) {
-            updateStatus.text = "配对信息已变更，请重新检查更新。"
-            return
-        }
+    private fun downloadUpdate(release: LinkRelease) {
         lifecycleScope.launch {
             checkUpdate.isEnabled = false
             installUpdate.isEnabled = false
             updateStatus.text = "正在下载 ${release.versionName}…"
             try {
-                val file = updates.download(LinkHttp(device.server, device.token), release)
+                val file = updates.download(release)
                 showVerifiedApk(file)
             } catch (cancel: CancellationException) {
                 throw cancel
@@ -237,32 +388,49 @@ class LinkActivity : ComponentActivity() {
     }
 
     private fun addSwitch(pane: LinearLayout, label: String, key: String, default: Boolean) =
-        CheckBox(this).apply {
+        SwitchCompat(this).apply {
             text = label
+            textSize = 15f
+            minHeight = dp(48)
+            setTextColor(colors.text)
+            val states = arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf(android.R.attr.state_checked), intArrayOf())
+            thumbTintList = ColorStateList(states, intArrayOf(colors.disabled, colors.onAccent, colors.panel))
+            trackTintList = ColorStateList(states, intArrayOf(colors.outline, colors.accent, colors.outline))
             isChecked = settings.prefs.getBoolean(key, default)
             setOnCheckedChangeListener { _, checked ->
-                if (key == "learning") applyLearning(checked)
-                else settings.prefs.edit().putBoolean(key, checked).apply()
+                if (bindingPreferences) return@setOnCheckedChangeListener
+                if (key == "learning") {
+                    applyLearning(checked)
+                } else {
+                    settings.prefs.edit().putBoolean(key, checked).apply()
+                    if (key == "share") syncAction.isEnabled = checked && settings.device() != null
+                }
             }
-            pane.addView(this)
+            pane.addView(this, row(2))
         }
 
     private fun applyLearning(enabled: Boolean) {
         learning.isEnabled = false
+        showDictionaryStatus("正在更新学习设置…")
         lifecycleScope.launch {
-            val session = RimeDaemon.createSession("ShuangpinLinkSettings")
+            val previous = settings.prefs.getBoolean("learning", true)
+            val name = "ShuangpinLinkSettings"
             try {
-                withContext(Dispatchers.IO) {
-                    val target = File(UserDataManager.userDataDir, "double_pinyin_mspy.custom.yaml")
-                    target.parentFile?.mkdirs()
-                    target.writeText("patch:\n  translator/enable_user_dict: $enabled\n")
-                }
-                session.runOnReady { deploy() }
+                withContext(Dispatchers.IO) { LinkLearning.configure(enabled) }
                 settings.prefs.edit().putBoolean("learning", enabled).apply()
-            } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { status.text = "词库设置更新失败，请重新部署输入法。" }
-            finally {
-                RimeDaemon.destroySession("ShuangpinLinkSettings")
+                RimeDaemon.createSession(name).runOnReady { deploy() }
+                showDictionaryStatus(if (enabled) "两个输入方案均已开启学习。" else "两个输入方案均已暂停学习。")
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                settings.prefs.edit().putBoolean("learning", previous).apply()
+                withContext(Dispatchers.IO) { runCatching { LinkLearning.configure(previous) } }
+                bindingPreferences = true
+                learning.isChecked = previous
+                bindingPreferences = false
+                showDictionaryStatus("词库设置更新失败，请稍后重试。")
+            } finally {
+                RimeDaemon.destroySession(name)
                 learning.isEnabled = true
             }
         }
@@ -270,11 +438,16 @@ class LinkActivity : ComponentActivity() {
 
     private fun refresh() {
         val device = settings.device()
-        status.text = if (device == null) "尚未配对。请在电脑端生成配对码。" else "已配对 · ${java.net.URI(device.server).host}"
+        status.text = if (device == null) "在电脑上生成配对码，即可同步剪贴板和词库。" else "已配对 · ${java.net.URI(device.server).host}"
+        scanAction.text = if (device == null) "扫描电脑配对码" else "重新扫码配对"
+        removePairAction.visibility = if (device == null) View.GONE else View.VISIBLE
+        bindingPreferences = true
         pause.isChecked = settings.prefs.getBoolean("paused", false)
         share.isChecked = settings.prefs.getBoolean("share", true)
+        bindingPreferences = false
         pause.isEnabled = device != null
         share.isEnabled = device != null
+        syncAction.isEnabled = device != null && share.isChecked
     }
 
     private fun clearLearning() {
@@ -285,9 +458,9 @@ class LinkActivity : ComponentActivity() {
             try {
                 session.runOnReady { clearLinkedDictionary() }
                 refresh()
-                status.text = "本机个人词库已清空。"
+                showDictionaryStatus("本机个人词库已清空。")
             } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { status.text = "清空词库未完成，请稍后重试。" }
+            catch (_: Exception) { showDictionaryStatus("清空词库未完成，请稍后重试。") }
             finally { RimeDaemon.destroySession(name) }
         }
     }

@@ -51,3 +51,28 @@ jobs:
           name: Android-unsigned-apks
           path: .build/trime/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+  android-ui:
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-37.0 build-tools;37.0.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-unsigned-apks
+          path: .build/android-ui
+      - name: Check the installed keyboard
+        run: bash scripts/smoke-android-ui.sh "$(find .build/android-ui -name '*x86_64*.apk' -print -quit)" dist/android-ui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Android-keyboard-preview
+          path: dist/android-ui/

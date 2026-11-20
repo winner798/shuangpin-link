@@ -1,6 +1,7 @@
-using System.Globalization;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace ShuangpinLink;
 
@@ -11,8 +12,22 @@ internal static class WindowsUpdate
 {
     const int MaxManifestBytes = 16 * 1024;
     const long MaxInstallerBytes = 300L * 1024 * 1024;
+    const int MaxRedirects = 5;
     const string Platform = "windows-x64";
     const string InstallerName = "ShuangpinLinkSetup.exe";
+    const string ReleasesBase = "https://github.com/winner798/shuangpin-link/releases/";
+    static readonly Regex VersionName = new(@"\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z");
+    static readonly HashSet<string> ReleaseHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"
+    };
+    static readonly HttpClient Http = new(new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        UseDefaultCredentials = false,
+    }) { Timeout = Timeout.InfiniteTimeSpan };
+    static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     static readonly string CacheDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ShuangpinLink", "updates");
 
@@ -25,18 +40,43 @@ internal static class WindowsUpdate
     static UpdateVersion ReadVersion()
     {
         using var stream = Resource("ShuangpinLink.UpdateVersion.json");
-        return JsonSerializer.Deserialize<UpdateVersion>(stream, Relay.Json)
+        return JsonSerializer.Deserialize<UpdateVersion>(stream, Json)
             ?? throw new InvalidDataException("缺少当前版本信息。");
     }
 
     static Stream Resource(string name) => typeof(WindowsUpdate).Assembly.GetManifestResourceStream(name)
         ?? throw new InvalidDataException("缺少更新配置。");
 
-    internal static async Task<WindowsRelease?> Check(Relay relay, CancellationToken cancel)
+    static async Task<HttpResponseMessage> OpenReleaseFile(string path, CancellationToken cancel)
+    {
+        Uri address = new Uri(ReleasesBase + path);
+        for (int redirects = 0; ; redirects++)
+        {
+            if (address.Scheme != Uri.UriSchemeHttps || address.UserInfo.Length != 0
+                || !address.IsDefaultPort || address.Fragment.Length != 0 || !ReleaseHosts.Contains(address.IdnHost))
+                throw new InvalidDataException("更新下载地址无效。");
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, address);
+            request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+            request.Headers.AcceptEncoding.ParseAdd("identity");
+            var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel);
+            if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308)) return response;
+
+            using (response)
+            {
+                if (redirects == MaxRedirects || response.Headers.Location is not { } location
+                    || !Uri.TryCreate(address, location, out var next))
+                    throw new InvalidDataException("更新下载重定向无效。");
+                address = next;
+            }
+        }
+    }
+
+    internal static async Task<WindowsRelease?> Check(CancellationToken cancel)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
-        using var response = await relay.GetStream("update", deadline.Token);
+        using var response = await OpenReleaseFile("latest/download/update-manifest.json", deadline.Token);
         response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength > MaxManifestBytes)
             throw new InvalidDataException("更新信息过大。");
@@ -50,7 +90,7 @@ internal static class WindowsUpdate
 
     static WindowsRelease? VerifyManifest(ReadOnlySpan<byte> contents)
     {
-        var envelope = JsonSerializer.Deserialize<Envelope>(contents, Relay.Json);
+        var envelope = JsonSerializer.Deserialize<Envelope>(contents, Json);
         if (envelope is not { Manifest.Length: > 0, Signature.Length: > 0 })
             throw new InvalidDataException("缺少更新签名。");
         var rawManifest = Convert.FromBase64String(envelope.Manifest);
@@ -62,9 +102,9 @@ internal static class WindowsUpdate
                 HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1))
             throw new CryptographicException("更新签名校验失败。");
 
-        var manifest = JsonSerializer.Deserialize<Manifest>(rawManifest, Relay.Json);
-        if (manifest is not { VersionCode: > 0, VersionName.Length: > 0 and <= 40 }
-            || manifest.VersionName.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('.' or '-' or '+')))
+        var manifest = JsonSerializer.Deserialize<Manifest>(rawManifest, Json);
+        if (manifest is not { VersionCode: > 0 and <= 2_100_000_000, VersionName.Length: > 0 and <= 40 }
+            || !VersionName.IsMatch(manifest.VersionName))
             throw new InvalidDataException("更新版本信息无效。");
         if (manifest.VersionCode <= Current.VersionCode) return null;
 
@@ -76,13 +116,15 @@ internal static class WindowsUpdate
             file.Size, Convert.FromHexString(file.Sha256));
     }
 
-    internal static async Task<string> Download(Relay relay, WindowsRelease release, CancellationToken cancel)
+    internal static async Task<string> Download(WindowsRelease release, CancellationToken cancel)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         deadline.CancelAfter(TimeSpan.FromMinutes(20));
         var token = deadline.Token;
-        string version = release.Version.VersionCode.ToString(CultureInfo.InvariantCulture);
-        using var response = await relay.GetStream($"update/files/{version}/{Platform}", token);
+        string version = release.Version.VersionName;
+        if (version.Length > 40 || !VersionName.IsMatch(version))
+            throw new InvalidDataException("更新版本信息无效。");
+        using var response = await OpenReleaseFile($"download/v{version}/{InstallerName}", token);
         response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength is long length && length != release.Size)
             throw new InvalidDataException("安装包长度与发布信息不一致。");

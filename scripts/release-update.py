@@ -1,4 +1,4 @@
-"""Sign and publish a paired-device update release without changing device data."""
+"""Prepare and verify a signed application update release."""
 
 import argparse
 import base64
@@ -34,7 +34,7 @@ def version(info):
     code, name = info["versionCode"], info["versionName"]
     if type(code) is not int or not 1 <= code <= MAX_VERSION:
         raise ValueError("Invalid version code")
-    if not isinstance(name, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", name):
+    if not isinstance(name, str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){2}", name):
         raise ValueError("Invalid version name")
     return code, name
 
@@ -177,6 +177,16 @@ def publish(args):
     print(f"Published signed release {name} ({code}).")
 
 
+def verify_staged(args):
+    release, _ = verify(args.source / "manifest.json", ROOT / "updates/public-key.spki.b64")
+    code, name = version(release)
+    expected = json.loads((ROOT / "updates/version.json").read_text(encoding="utf-8"))
+    if (code, name) != version(expected):
+        raise ValueError("The staged version does not match updates/version.json")
+    checked_files(args.source / str(code), release["files"])
+    print(f"Verified signed release {name} ({code}).")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -186,9 +196,11 @@ def main():
     hosting = commands.add_parser("publish")
     for option in ("source", "public-key", "target"):
         hosting.add_argument(f"--{option}", type=Path, required=True)
+    verification = commands.add_parser("verify")
+    verification.add_argument("--source", type=Path, required=True)
     args = parser.parse_args()
     try:
-        {"stage": stage, "publish": publish}[args.command](args)
+        {"stage": stage, "publish": publish, "verify": verify_staged}[args.command](args)
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"{error}\n")
 

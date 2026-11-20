@@ -1,0 +1,225 @@
+config_version: "1"
+name: 双拼互联
+
+style:
+  candidate_text_size: 20
+  candidate_padding: 12
+  candidate_spacing: 0
+  candidate_view_height: 36
+  candidate_corner_radius: 12
+  comment_height: 12
+  comment_position: right
+  comment_text_size: 10
+  horizontal_gap: 4
+  vertical_gap: 6
+  keyboard_padding: 6
+  keyboard_padding_bottom: 5
+  keyboard_padding_land: 44
+  keyboard_padding_land_bottom: 4
+  keyboard_height: 232
+  keyboard_height_land: 162
+  key_height: 54
+  key_text_size: 21
+  key_long_text_size: 14
+  label_text_size: 14
+  symbol_text_size: 10
+  key_border: 1
+  round_corner: 10
+  enter_label_mode: 2
+  enter_labels:
+    go: 前往
+    done: 完成
+    next: 下一项
+    pre: 上一项
+    search: 搜索
+    send: 发送
+    default: ↵
+
+preedit:
+  horizontal_padding: 10
+  top_start_radius: 8
+  top_end_radius: 8
+  foreground: {font_size: 15}
+
+window:
+  insets: {vertical: 5, horizontal: 6}
+  item_padding: {vertical: 3, horizontal: 7}
+  corner_radius: 10
+  foreground: {label_font_size: 13, text_font_size: 17, comment_font_size: 12}
+
+preset_color_schemes:
+  default:
+    name: 浅色
+    dark_scheme: night
+    light_scheme: default
+    root_background: 0xF3F6F8
+    back_color: 0xFFFFFF
+    border_color: 0xD6E1E6
+    candidate_background: 0xFFFFFF
+    candidate_border_color: 0xD6E1E6
+    candidate_text_color: 0x17232B
+    comment_text_color: 0x586A75
+    hilited_candidate_back_color: 0xDAEFEB
+    hilited_candidate_text_color: 0x005B55
+    hilited_comment_text_color: 0x386B65
+    hilited_candidate_button_color: 0xDAEFEB
+    keyboard_back_color: 0xF3F6F8
+    key_back_color: 0xFFFFFF
+    key_border_color: 0xD6E1E6
+    key_text_color: 0x17232B
+    key_symbol_color: 0x586A75
+    hilited_key_back_color: 0xDAEFEB
+    hilited_key_text_color: 0x005B55
+    text_color: 0x17232B
+    text_back_color: 0xFFFFFF
+    liquid_keyboard_background: 0xF3F6F8
+    action_back: 0xE5EBEE
+    emphasis_back: 0x007F78
+    emphasis_text: 0xFFFFFF
+    mode_back: 0xE4F2EF
+    mode_text: 0x005B55
+  night:
+    name: 深色
+    dark_scheme: night
+    light_scheme: default
+    root_background: 0x172127
+    back_color: 0x202C33
+    border_color: 0x394952
+    candidate_background: 0x202C33
+    candidate_border_color: 0x394952
+    candidate_text_color: 0xF1F6F7
+    comment_text_color: 0xA4B6BF
+    hilited_candidate_back_color: 0x234840
+    hilited_candidate_text_color: 0xA1F4DE
+    hilited_comment_text_color: 0x9BCBC0
+    hilited_candidate_button_color: 0x234840
+    keyboard_back_color: 0x172127
+    key_back_color: 0x29363E
+    key_border_color: 0x394952
+    key_text_color: 0xF1F6F7
+    key_symbol_color: 0xA4B6BF
+    hilited_key_back_color: 0x234840
+    hilited_key_text_color: 0xA1F4DE
+    text_color: 0xF1F6F7
+    text_back_color: 0x202C33
+    liquid_keyboard_background: 0x172127
+    action_back: 0x34454E
+    emphasis_back: 0x83DFC8
+    emphasis_text: 0x112420
+    mode_back: 0x234840
+    mode_text: 0xA1F4DE
+
+tool_bar:
+  button_spacing: 4
+  primary_button:
+    action: Scheme_menu
+    size: [86, 44]
+    background: {normal: mode_back, highlight: hilited_candidate_back_color, corner_radius: 10, horizontal_inset: 5, vertical_inset: 5}
+    foreground: {style: 切换方案, normal: mode_text, font_size: 13, padding: 4}
+  buttons:
+    - action: Link_settings
+      size: [62, 44]
+      background: {highlight: hilited_candidate_back_color, corner_radius: 9}
+      foreground: {style: 设置, font_size: 13}
+    - action: Link_clipboard
+      size: [70, 44]
+      background: {highlight: hilited_candidate_back_color, corner_radius: 9}
+      foreground: {style: 剪贴板, font_size: 13}
+
+preset_keys:
+  Scheme_menu: {label: 切换方案, send: MENU}
+  Link_settings: {label: 设置, send: SETTINGS}
+  Link_clipboard: {label: 剪贴板, send: FUNCTION, command: clipboard_window, option: '0'}
+  Number_board: {label: '123', send: Eisu_toggle, select: number}
+  Letter_board: {label: 字母, send: Eisu_toggle, select: default}
+  Language_mode: {toggle: ascii_mode, send: SWITCH_CHARSET, states: [中, 英]}
+  Shift_L: {label: ⇧, send: Shift_L, shift_lock: ascii_long}
+  BackSpace: {label: ⌫, repeatable: true, send: BackSpace}
+  Space: {label: 空格, functional: false, send: space}
+  Return: {label: enter_labels, send: Return}
+
+preset_keyboards:
+  default:
+    name: 字母键盘
+    width: 10
+    columns: 10
+    ascii_mode: 0
+    ascii_keyboard: default
+    lock: true
+    keys:
+      - {click: q, long_click: '1', hint: '1'}
+      - {click: w, long_click: '2', hint: '2'}
+      - {click: e, long_click: '3', hint: '3'}
+      - {click: r, long_click: '4', hint: '4'}
+      - {click: t, long_click: '5', hint: '5'}
+      - {click: y, long_click: '6', hint: '6'}
+      - {click: u, long_click: '7', hint: '7'}
+      - {click: i, long_click: '8', hint: '8'}
+      - {click: o, long_click: '9', hint: '9'}
+      - {click: p, long_click: '0', hint: '0'}
+      - {click: a}
+      - {click: s}
+      - {click: d}
+      - {click: f}
+      - {click: g}
+      - {click: h}
+      - {click: j}
+      - {click: k}
+      - {click: l}
+      - {click: ';', long_click: ':'}
+      - {click: Shift_L, width: 15, key_back_color: action_back}
+      - {click: z}
+      - {click: x}
+      - {click: c}
+      - {click: v}
+      - {click: b}
+      - {click: n}
+      - {click: m}
+      - {click: BackSpace, width: 15, key_back_color: action_back}
+      - {click: Number_board, width: 12, key_back_color: action_back, key_text_size: 14}
+      - {click: Language_mode, width: 13, key_back_color: mode_back, key_text_color: mode_text, key_text_size: 15}
+      - {click: ',', long_click: '!', width: 10}
+      - {click: Space, width: 37, key_text_size: 14}
+      - {click: '.', long_click: '?', width: 10}
+      - {click: Return, width: 18, key_back_color: emphasis_back, key_text_color: emphasis_text, key_border_color: emphasis_back, key_text_size: 16}
+  number:
+    name: 数字与符号
+    width: 10
+    columns: 10
+    ascii_mode: 1
+    ascii_keyboard: number
+    keys:
+      - {click: '1'}
+      - {click: '2'}
+      - {click: '3'}
+      - {click: '4'}
+      - {click: '5'}
+      - {click: '6'}
+      - {click: '7'}
+      - {click: '8'}
+      - {click: '9'}
+      - {click: '0'}
+      - {click: '@'}
+      - {click: '#'}
+      - {click: '$'}
+      - {click: '%'}
+      - {click: '&'}
+      - {click: '*'}
+      - {click: '('}
+      - {click: ')'}
+      - {click: '-'}
+      - {click: '+'}
+      - {click: '!'}
+      - {click: '?'}
+      - {click: '/'}
+      - {click: '_'}
+      - {click: ':'}
+      - {click: ';'}
+      - {click: '='}
+      - {click: "'", long_click: '"'}
+      - {click: BackSpace, width: 20, key_back_color: action_back}
+      - {click: Letter_board, width: 25, key_back_color: action_back, key_text_size: 14}
+      - {click: ',', width: 10}
+      - {click: Space, width: 37, key_text_size: 14}
+      - {click: '.', width: 10}
+      - {click: Return, width: 18, key_back_color: emphasis_back, key_text_color: emphasis_text, key_border_color: emphasis_back, key_text_size: 16}

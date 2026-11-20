@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import re
+import runpy
 import shutil
 import subprocess
 import time
@@ -20,6 +21,9 @@ TRIME_REV = "b5cad1a49095a3652e9188982de400ca3a653f37"
 ICE_REV = "927e1cf1d3eeb9bf4be85e3f684dba4dd485b6f6"
 WEASEL_TAG = "0.17.4"
 ARCHES = ("arm64-v8a", "x86_64")
+INPUT_SCHEMES = ("double_pinyin_mspy", "rime_ice")
+SCHEMA_DEPENDENCIES = ("melt_eng", "radical_pinyin")
+PACKAGED_SCHEMAS = {f"{name}.schema.yaml" for name in (*INPUT_SCHEMES, *SCHEMA_DEPENDENCIES)}
 CHECKSUMS = {
     "weasel.exe": "cf509534a8f5f8af9c98ed7cbb8f135439f145a8cbe7e50ede42bb5b5ab45c29",
     "predict.db": "2a5a2b7c77f8f3d7c0836dfc8fd8b791ac2574d8bd93a3a2baaae1ee4861f5be",
@@ -73,10 +77,12 @@ def copy_rime(destination, windows=False):
     included = ("lua", "cn_dicts", "en_dicts", "opencc")
     for name in included:
         shutil.copytree(src / name, destination / name, dirs_exist_ok=True)
+    # APK extraction and an older preparation can leave starter schemas in this generated tree.
+    for path in destination.glob("*.schema.yaml"):
+        if path.name not in PACKAGED_SCHEMAS:
+            path.unlink()
     for path in src.glob("*.yaml"):
-        if path.name.endswith(".schema.yaml") and path.name not in (
-            "double_pinyin_mspy.schema.yaml", "melt_eng.schema.yaml", "radical_pinyin.schema.yaml",
-        ):
+        if path.name.endswith(".schema.yaml") and path.name not in PACKAGED_SCHEMAS:
             continue
         shutil.copyfile(path, destination / path.name)
     (destination / "NOTICE-rime-ice.txt").write_text(
@@ -87,18 +93,21 @@ def copy_rime(destination, windows=False):
         shutil.copyfile(src / "AUTHORS", destination / "AUTHORS-rime-ice.txt")
     default_yaml = destination / "default.yaml"
     text = default_yaml.read_text(encoding="utf-8")
-    text, count = re.subn(r"(?ms)^schema_list:\n.*?(?=^[a-z]\w*:)",
-                          "schema_list:\n  - schema: double_pinyin_mspy\n\n", text, count=1)
+    scheme_list = "schema_list:\n" + "".join(f"  - schema: {item}\n" for item in INPUT_SCHEMES)
+    text, count = re.subn(r"(?ms)^schema_list:\n.*?(?=^[a-z]\w*:)", scheme_list + "\n", text, count=1)
     if count != 1:
         raise RuntimeError("Rime Ice schema list moved")
     default_yaml.write_text(text, encoding="utf-8")
-    schema = destination / "double_pinyin_mspy.schema.yaml"
-    text = schema.read_text(encoding="utf-8")
-    text = text.replace("switches:\n", "switches:\n  - name: prediction\n    states: [联想关, 联想开]\n    reset: 1\n", 1)
-    text = text.replace("  processors:\n", "  processors:\n    - predictor\n", 1)
-    text = text.replace("  translators:\n", "  translators:\n    - predict_translator\n", 1)
-    text += "\n\npredictor:\n  db: predict.db\n  max_candidates: 5\n  max_iterations: 1\n"
-    schema.write_text(text, encoding="utf-8")
+    for schema_id in INPUT_SCHEMES:
+        schema = destination / f"{schema_id}.schema.yaml"
+        text = schema.read_text(encoding="utf-8")
+        if schema_id == "rime_ice":
+            text = text.replace("  name: 雾凇拼音\n", "  name: 普通拼音\n", 1)
+        text = text.replace("switches:\n", "switches:\n  - name: prediction\n    states: [联想关, 联想开]\n    reset: 1\n", 1)
+        text = text.replace("  processors:\n", "  processors:\n    - predictor\n", 1)
+        text = text.replace("  translators:\n", "  translators:\n    - predict_translator\n", 1)
+        text += "\n\npredictor:\n  db: predict.db\n  max_candidates: 5\n  max_iterations: 1\n"
+        schema.write_text(text, encoding="utf-8")
     shutil.copyfile(download("predict.db", "https://github.com/rime/librime-predict/releases/download/data-1.0/predict.db"),
                     destination / "predict.db")
     if windows:
@@ -137,6 +146,95 @@ def change(file, edits):
             raise RuntimeError(f"Upstream layout changed: {file.name}, {before[:75]}")
         text = text.replace(before, after, 1)
     file.write_text(text, encoding="utf-8")
+
+
+def restrict_android_schemes(java):
+    manager = java / "core/data/UserDataManager.kt"
+    text = manager.read_text(encoding="utf-8")
+    if "val inputSchemeIds" not in text:
+        ids = ", ".join(f'"{item}"' for item in INPUT_SCHEMES)
+        text, count = re.subn(
+            r'(?ms)^    private const val SCHEMA_LIST_CUSTOM_PATCH = """.*?^    """\n',
+            f"    val inputSchemeIds = listOf({ids})\n", text, count=1,
+        )
+        if count != 1:
+            raise RuntimeError("Trime's first-run schema configuration moved")
+        manager.write_text(text, encoding="utf-8")
+    change(manager, [
+        ('''    fun ensureDefaultCustomConfig() {
+        val custom = File(userDataDir, DEFAULT_CUSTOM_FILE_NAME)
+        if (!custom.exists() && custom.createNewFile()) {
+            custom.writeText(SCHEMA_LIST_CUSTOM_PATCH.trimIndent())
+        }
+    }''', r'''    fun ensureDefaultCustomConfig(): Boolean {
+        val custom = File(userDataDir, DEFAULT_CUSTOM_FILE_NAME)
+        val original = if (custom.isFile) custom.readText().replace("\r\n", "\n") else ""
+        val entry = Regex("""(?m)^([ \t]+)schema_list[ \t]*:[^\n]*(?:\n(?:\1[ \t]+|\1(?=-))[^\n]*)*""").find(original)
+        val patchHeader = Regex("""(?m)^patch[ \t]*:[ \t]*(?:\{[ \t]*})?[ \t]*(?:#[^\n]*)?$""").find(original)
+        fun schemaList(indent: String): String = buildString {
+            append(indent).append("schema_list:")
+            for (id in inputSchemeIds) append('\n').append(indent).append("  - schema: ").append(id)
+        }
+        val updated = when {
+            entry != null -> original.replaceRange(entry.range, schemaList(entry.groupValues[1]))
+            patchHeader != null -> {
+                val indent = Regex("""(?m)^([ \t]+)\S""").find(original, patchHeader.range.last + 1)
+                    ?.groupValues?.get(1) ?: "  "
+                original.replaceRange(patchHeader.range, "patch:\n${schemaList(indent)}")
+            }
+            // Existing flow-style patch maps are left intact. The keyboard picker still uses the supported IDs.
+            Regex("""(?m)^patch[ \t]*:""").containsMatchIn(original) -> return false
+            original.isBlank() -> "patch:\n${schemaList("  ")}\n"
+            else -> "${original.trimEnd()}\n\npatch:\n${schemaList("  ")}\n"
+        }
+        if (updated == original) return false
+        custom.parentFile?.mkdirs()
+        val atomic = AtomicFile(custom)
+        val out = atomic.startWrite()
+        try {
+            out.write(updated.toByteArray(Charsets.UTF_8))
+            atomic.finishWrite(out)
+        } catch (error: IOException) {
+            atomic.failWrite(out)
+            throw error
+        }
+        return true
+    }'''),
+    ])
+    rime = java / "core/Rime.kt"
+    change(rime, [
+        ('    override suspend fun availableSchemata(): Array<SchemaItem> = withRimeContext { getAvailableRimeSchemaList() }',
+         '''    private fun Array<SchemaItem>.supportedSchemata(): Array<SchemaItem> = UserDataManager.inputSchemeIds
+        .mapNotNull { id -> firstOrNull { it.id == id } }
+        .toTypedArray()
+
+    override suspend fun availableSchemata(): Array<SchemaItem> = withRimeContext { getAvailableRimeSchemaList().supportedSchemata() }'''),
+        ('    override suspend fun enabledSchemata(): Array<SchemaItem> = withRimeContext { getSelectedRimeSchemaList() }',
+         '    override suspend fun enabledSchemata(): Array<SchemaItem> = withRimeContext { getSelectedRimeSchemaList().supportedSchemata() }'),
+        ('    override suspend fun setEnabledSchemata(schemaIds: Array<String>) = withRimeContext { selectRimeSchemas(schemaIds) }',
+         '    override suspend fun setEnabledSchemata(schemaIds: Array<String>) = withRimeContext { selectRimeSchemas(UserDataManager.inputSchemeIds.toTypedArray()) }'),
+        ('    override suspend fun selectedSchemata(): Array<SchemaItem> = withRimeContext { getRimeSchemaList() }',
+         '    override suspend fun selectedSchemata(): Array<SchemaItem> = withRimeContext { getRimeSchemaList().supportedSchemata() }'),
+        ('    override suspend fun selectSchema(schemaId: String) = withRimeContext { selectRimeSchema(schemaId) }',
+         '    override suspend fun selectSchema(schemaId: String) = withRimeContext { schemaId in UserDataManager.inputSchemeIds && selectRimeSchema(schemaId) }'),
+        ('        UserDataManager.ensureDefaultCustomConfig()',
+         '        val schemaConfigChanged = UserDataManager.ensureDefaultCustomConfig()'),
+        ('            fullCheck,\n        )', '            fullCheck || schemaConfigChanged,\n        )'),
+    ])
+    picker = java / "ime/dialog/EnabledSchemaPickerDialog.kt"
+    change(picker, [
+        ('                setTitle(R.string.select_current_schema)', '                setTitle("输入方案")'),
+    ])
+    for filename, api in (("ime/keyboard/CommonKeyboardActionListener.kt", "api"),
+                          ("ime/switches/SwitchOptionWindow.kt", "r")):
+        path = java / filename
+        text = path.read_text(encoding="utf-8")
+        call = f"EnabledSchemaPickerDialog.build({api}, service.lifecycleScope, context)"
+        text = re.sub(
+            re.escape(call) + r" \{\n +setNegativeButton\(R\.string\.enable_schemata\) \{ _, _ ->\n +AppUtils\.launchMainToSchemaList\(context\)\n +\}\n +\}",
+            call, text, count=1,
+        )
+        path.write_text(text, encoding="utf-8")
 
 
 def prepare_android():
@@ -198,25 +296,7 @@ def prepare_android():
          '        </provider>\n\n'
          '        <activity android:name=".link.LinkActivity" android:exported="false" />'),
     ])
-    change(java / "core/data/UserDataManager.kt", [
-        ("          - schema: luna_pinyin_simp", "          - schema: double_pinyin_mspy"),
-    ])
-    user_data_manager = java / "core/data/UserDataManager.kt"
-    text = user_data_manager.read_text(encoding="utf-8")
-    user_data_manager.write_text(text.replace("          - schema: luna_pinyin\n", "", 1), encoding="utf-8")
-    keyboard = assets / "trime.yaml"
-    text = keyboard.read_text(encoding="utf-8")
-    qwerty = re.search(r"(?ms)^  qwerty:\n.*?(?=^  \w+:)", text)
-    if not qwerty:
-        raise RuntimeError("Trime QWERTY layout missing")
-    compact = re.sub(r"(?m)^    - \{width: 5\}\n", "", qwerty[0])
-    compact = compact.replace("  qwerty:", "  default:", 1).replace("預設26鍵", "微软双拼 · 26键", 1)
-    compact = compact.replace("    - {click: 'l', long_click: ';'}\n", "    - {click: 'l'}\n    - {click: ';', long_click: ':'}\n", 1)
-    text, count = re.subn(r"(?ms)(^preset_keyboards:\n)  default:\n.*?(?=^  \w+:)",
-                          lambda match: match[1] + compact, text, count=1)
-    if count != 1:
-        raise RuntimeError("Trime default layout missing")
-    keyboard.write_text(text, encoding="utf-8")
+    restrict_android_schemes(java)
     change(java / "core/RimeApi.kt", [
         ("    suspend fun syncUserData(): Boolean", "    suspend fun clearLinkedDictionary()\n    suspend fun syncUserData(): Boolean"),
     ])
@@ -269,6 +349,7 @@ def prepare_android():
         ('        if (targetKeyboard == ".ascii" || targetKeyboard == "number") {',
          '        if (privateField || targetKeyboard == ".ascii" || targetKeyboard == "number") {'),
     ])
+    runpy.run_path(str(ROOT / "android/apply_design.py"))["apply_design"](src, assets)
 
 
 def prepare_windows():

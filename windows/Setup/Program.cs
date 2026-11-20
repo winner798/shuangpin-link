@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Reflection;
 using Microsoft.Win32;
+using ShuangpinLink;
 
 static class Setup
 {
@@ -21,7 +22,7 @@ static class Setup
             using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("install.zip")
                 ?? throw new InvalidDataException("安装文件不存在。");
             using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
-            var required = new[] { "weasel.exe", "ShuangpinLink.exe", "rime/default.custom.yaml", "rime/predict.db", "rime/double_pinyin_mspy.schema.yaml" };
+            var required = new[] { "weasel.exe", "ShuangpinLink.exe", "rime/default.custom.yaml", "rime/predict.db", "rime/double_pinyin_mspy.schema.yaml", "rime/rime_ice.schema.yaml" };
             if (required.Any(file => zip.GetEntry(file)?.Length is null or 0))
                 throw new InvalidDataException("安装包不完整。");
             if (verify)
@@ -34,12 +35,12 @@ static class Setup
                 return 0;
             }
             resumeFromUpdate = WaitForPreviousInstance(args);
-            if (MessageBox.Show("将安装微软双拼输入法和托盘同步程序。若已安装小狼毫，会先备份将被替换的配置和词库文件。继续吗？", Title,
+            if (MessageBox.Show("将安装双拼互联，包含微软双拼、普通拼音和设备互通。现有输入配置将先备份。继续安装？", Title,
                     MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return 0;
             zip.ExtractToDirectory(stage);
             Install(stage);
             complete = true;
-            MessageBox.Show("安装完成。按 Win + 空格选择小狼毫，点击托盘中的双拼互联打开配对设置。", Title,
+            MessageBox.Show("安装完成。按 Win + 空格选择「小狼毫」。打字时按 Ctrl + ` 切换微软双拼和普通拼音。", Title,
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
         }
@@ -116,6 +117,15 @@ static class Setup
         var updated = new List<(string Destination, string? Backup)>();
         try
         {
+            if (!LearningSettings.Enabled(rimeUser))
+            {
+                foreach (var name in LearningSettings.SchemaFiles)
+                {
+                    string previous = Path.Combine(rimeUser, name);
+                    var contents = File.Exists(previous) ? File.ReadAllText(previous) : null;
+                    File.WriteAllText(Path.Combine(source, name), LearningSettings.WithLearning(contents, enabled: false));
+                }
+            }
             File.Copy(Path.Combine(stage, "ShuangpinLink.exe"), stagedExecutable);
             foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
             {
@@ -163,6 +173,6 @@ static class Setup
         using var deployer = Process.Start(new ProcessStartInfo(Path.Combine(root, "WeaselDeployer.exe"), "/deploy") { UseShellExecute = false })
             ?? throw new InvalidOperationException("无法部署输入法配置。");
         deployer.WaitForExit();
-        if (deployer.ExitCode != 0) throw new InvalidOperationException("微软双拼词库部署失败，配置已恢复。");
+        if (deployer.ExitCode != 0) throw new InvalidOperationException("输入方案部署失败，配置已恢复。");
     }
 }
