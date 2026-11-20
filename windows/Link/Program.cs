@@ -16,6 +16,11 @@ internal static class Program
     {
         using var instance = new Mutex(true, @"Local\ShuangpinLink", out bool first);
         if (!first) return;
+        if (InputPaths.InstalledEngine() is { } engine)
+        {
+            try { InputPaths.StartTool(engine, InputPaths.Server).Dispose(); }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { }
+        }
         ApplicationConfiguration.Initialize();
         Application.Run(new LinkWindow(args.Contains("--tray")));
     }

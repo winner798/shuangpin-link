@@ -10,16 +10,16 @@ style:
   comment_height: 12
   comment_position: right
   comment_text_size: 10
-  horizontal_gap: 5
+  horizontal_gap: 4
   vertical_gap: 6
   keyboard_padding: 8
   keyboard_padding_bottom: 6
   keyboard_padding_land: 44
   keyboard_padding_land_bottom: 4
-  keyboard_height: 232
-  keyboard_height_land: 162
+  keyboard_height: 264
+  keyboard_height_land: 168
   key_height: 54
-  key_text_size: 21
+  key_text_size: 23
   key_long_text_size: 14
   label_text_size: 14
   symbol_text_size: 10
@@ -151,16 +151,16 @@ preset_keyboards:
     ascii_keyboard: default
     lock: true
     keys:
-      - {click: q, long_click: '1', hint: '1'}
-      - {click: w, long_click: '2', hint: '2'}
-      - {click: e, long_click: '3', hint: '3'}
-      - {click: r, long_click: '4', hint: '4'}
-      - {click: t, long_click: '5', hint: '5'}
-      - {click: y, long_click: '6', hint: '6'}
-      - {click: u, long_click: '7', hint: '7'}
-      - {click: i, long_click: '8', hint: '8'}
-      - {click: o, long_click: '9', hint: '9'}
-      - {click: p, long_click: '0', hint: '0'}
+      - {click: q, long_click: '1'}
+      - {click: w, long_click: '2'}
+      - {click: e, long_click: '3'}
+      - {click: r, long_click: '4'}
+      - {click: t, long_click: '5'}
+      - {click: y, long_click: '6'}
+      - {click: u, long_click: '7'}
+      - {click: i, long_click: '8'}
+      - {click: o, long_click: '9'}
+      - {click: p, long_click: '0'}
       - {click: a}
       - {click: s}
       - {click: d}
@@ -171,7 +171,7 @@ preset_keyboards:
       - {click: k}
       - {click: l}
       - {click: ';', long_click: ':'}
-      - {click: Shift_L, width: 15, key_back_color: action_back}
+      - {click: Shift_L, width: 14, key_back_color: action_back}
       - {click: z}
       - {click: x}
       - {click: c}
@@ -179,13 +179,13 @@ preset_keyboards:
       - {click: b}
       - {click: n}
       - {click: m}
-      - {click: BackSpace, width: 15, key_back_color: action_back}
-      - {click: Number_board, width: 12, key_back_color: action_back, key_text_size: 14}
-      - {click: Language_mode, width: 13, key_back_color: mode_back, key_text_color: mode_text, key_text_size: 15}
-      - {click: ',', long_click: '!', width: 10}
-      - {click: Space, width: 37, key_text_size: 14}
-      - {click: '.', long_click: '?', width: 10}
-      - {click: Return, width: 18, key_back_color: emphasis_back, key_text_color: emphasis_text, key_border_color: emphasis_back, key_text_size: 16}
+      - {click: BackSpace, width: 16, key_back_color: action_back}
+      - {click: Number_board, width: 16, key_back_color: action_back, key_text_size: 16}
+      - {click: ',', long_click: '!', width: 9}
+      - {click: Space, width: 38, key_text_size: 16}
+      - {click: '.', long_click: '?', width: 8}
+      - {click: Language_mode, width: 10, key_back_color: mode_back, key_text_color: mode_text, key_text_size: 16}
+      - {click: Return, width: 19, key_back_color: emphasis_back, key_text_color: emphasis_text, key_border_color: emphasis_back, key_text_size: 17}
   number:
     name: 数字与符号
     width: 10

@@ -9,6 +9,10 @@ on:
         description: Smoke-test the Android APK from this existing build run
         type: string
         required: false
+      windows_only:
+        description: Build and test the Windows installer only
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -16,7 +20,7 @@ permissions:
 
 jobs:
   relay:
-    if: ${{ !inputs.android_build_run }}
+    if: ${{ !inputs.android_build_run && !inputs.windows_only }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +28,7 @@ jobs:
 
   windows:
     if: ${{ !inputs.android_build_run }}
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -37,9 +41,20 @@ jobs:
           name: Windows-x64-installer
           path: dist/windows/ShuangpinLinkSetup.exe
           if-no-files-found: error
+      - name: Install and type through the Windows input service
+        shell: pwsh
+        run: ./scripts/smoke-windows-ime.ps1 -Installer dist/windows/ShuangpinLinkSetup.exe -OutputDirectory .build/windows-ime-smoke -Isolated
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-installed-input-preview
+          path: |
+            .build/windows-ime-smoke/*.png
+            .build/windows-ime-smoke/*.txt
+          if-no-files-found: warn
 
   android:
-    if: ${{ !inputs.android_build_run }}
+    if: ${{ !inputs.android_build_run && !inputs.windows_only }}
     runs-on: ubuntu-latest
     env:
       BUILD_ABI: arm64-v8a,x86_64

@@ -74,7 +74,7 @@ internal sealed partial class LinkWindow
         modes.Controls.Add(Copy("用两个键输入一个音节"), 0, 1);
         modes.Controls.Add(Copy("输入完整拼音"), 1, 1);
         AddCards(inputPage,
-            Card("输入方案", modes, Copy("按 Win + 空格选「小狼毫」。打字时按 Ctrl + `，再从候选窗切换方案。"), Copy("试打"), Input(trial, "试打输入框")),
+            Card("输入方案", modes, Copy("按 Win + 空格选「双拼互联」。打字时按 Ctrl + ` 切换方案。"), Copy("试打"), Input(trial, "试打输入框")),
             Card("个人词库", learning, share, Actions(ActionButton("立即同步词库", SyncNow), ActionButton("清空本机词库", ClearDictionary))));
 
         qrBox.BackColor = Glass.Contrast ? SystemColors.Window : Color.Transparent;

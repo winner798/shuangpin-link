@@ -6,7 +6,7 @@
 
 正式安装包可在 [GitHub Releases](https://github.com/winner798/shuangpin-link/releases/latest) 下载。
 
-1. Windows 运行 `ShuangpinLinkSetup.exe`。安装后按 `Win + 空格` 选择小狼毫。打字时用 `` Ctrl + ` `` 打开方案选择。双拼互联设置从系统托盘或开始菜单打开。
+1. Windows 运行 `ShuangpinLinkSetup.exe`，按系统提示授权注册输入组件。安装后按 `Win + 空格` 选择「双拼互联」。打字时用 `` Ctrl + ` `` 打开方案选择。双拼互联设置从系统托盘或开始菜单打开。
 2. Android 安装与手机架构匹配的 APK，从「双拼互联」应用主页启用并选择键盘。打字时使用键盘顶部的方案切换入口。
 3. Windows 填入服务器 HTTPS 地址和首次启用码，点击「启用或恢复」。在安卓端的双拼互联设置中扫描 Windows 显示的二维码。二维码五分钟有效，用过即失效。
 4. 复制一段不含隐私的测试文字。Windows 用 `Ctrl+V` 粘贴，Android 可使用系统粘贴或键盘剪贴板。输入法后台被手机回收后，重新打开键盘可继续接收最近的一条同步内容。
@@ -17,7 +17,7 @@ Windows 托盘和 Android 的双拼互联设置都可点「检查更新」。两
 
 ## 开发
 
-- `rime/` 包含输入方案和 Windows 候选窗配置。`scripts/prepare.py` 固定并准备上游源码与发行依赖。
+- `rime/` 包含输入方案和 Windows 候选窗配置。`windows/Native/` 维护独立的 Windows 输入服务标识和原生界面改动。
 - `android/` 包含独立的键盘和设置界面，以及配对、剪贴板和词库同步代码。构建时叠加到同文源码。
 - `windows/` 包含托盘程序和安装程序源码。
 - `server/` 包含 Ubuntu 上的 Python/SQLite 中继。`tests/` 包含协议集成测试。

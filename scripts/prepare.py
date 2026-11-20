@@ -19,13 +19,11 @@ VENDOR = BUILD / "vendor"
 TRIME_TAG = "v3.3.13"
 TRIME_REV = "b5cad1a49095a3652e9188982de400ca3a653f37"
 ICE_REV = "927e1cf1d3eeb9bf4be85e3f684dba4dd485b6f6"
-WEASEL_TAG = "0.17.4"
 ARCHES = ("arm64-v8a", "x86_64")
 INPUT_SCHEMES = ("double_pinyin_mspy", "rime_ice")
 SCHEMA_DEPENDENCIES = ("melt_eng", "radical_pinyin")
 PACKAGED_SCHEMAS = {f"{name}.schema.yaml" for name in (*INPUT_SCHEMES, *SCHEMA_DEPENDENCIES)}
 CHECKSUMS = {
-    "weasel.exe": "cf509534a8f5f8af9c98ed7cbb8f135439f145a8cbe7e50ede42bb5b5ab45c29",
     "predict.db": "2a5a2b7c77f8f3d7c0836dfc8fd8b791ac2574d8bd93a3a2baaae1ee4861f5be",
     "trime-arm64.apk": "e7535ea421a25962eb2ea37c46ff867838e69d33ba6d935876ab84d108de5020",
     "trime-x86_64.apk": "d3bfbc84a99d77e150e9918ddb9d1a348a730bdbbbea5c0c1ee4375356a6f221",
@@ -111,7 +109,8 @@ def copy_rime(destination, windows=False):
     shutil.copyfile(download("predict.db", "https://github.com/rime/librime-predict/releases/download/data-1.0/predict.db"),
                     destination / "predict.db")
     if windows:
-        for name in ("default.custom.yaml", "weasel.custom.yaml"):
+        (destination / "weasel.custom.yaml").unlink(missing_ok=True)
+        for name in ("default.custom.yaml", "shuangpin_link.custom.yaml"):
             shutil.copyfile(ROOT / "rime" / name, destination / name)
 
 
@@ -353,7 +352,6 @@ def prepare_android():
 
 
 def prepare_windows():
-    download("weasel.exe", f"https://github.com/rime/weasel/releases/download/{WEASEL_TAG}/weasel-0.17.4.0-installer.exe")
     copy_rime(BUILD / "windows-data", windows=True)
 
 

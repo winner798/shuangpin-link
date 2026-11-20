@@ -22,7 +22,7 @@ patch:
   style/layout/shadow_offset_y: 2
   style/color_scheme: shuangpin_link
   style/color_scheme_dark: shuangpin_link_dark
-  # 小狼毫用 BGR 表示颜色。窗口底色保持不透明，只在轮廓外绘制淡阴影。
+  # 原生候选窗以 BGR 表示颜色，阴影只绘制在轮廓外。
   preset_color_schemes/shuangpin_link:
     name: 双拼互联 浅紫
     back_color: 0xfbf1f4

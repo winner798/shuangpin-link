@@ -1,0 +1,47 @@
+name: Windows installed input method
+
+on:
+  workflow_dispatch:
+    inputs:
+      windows_build_run:
+        description: Use the Windows installer artifact from this exact build run
+        type: string
+        required: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  desktop:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build the Windows installer
+        if: ${{ !inputs.windows_build_run }}
+        shell: pwsh
+        run: ./scripts/package-windows.ps1
+      - name: Fetch the exact installer to test
+        if: ${{ inputs.windows_build_run }}
+        uses: actions/download-artifact@v4
+        with:
+          name: Windows-x64-installer
+          path: dist/windows
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.windows_build_run }}
+      - name: Install and type through the Windows input service
+        shell: pwsh
+        run: ./scripts/smoke-windows-ime.ps1 -Installer dist/windows/ShuangpinLinkSetup.exe -OutputDirectory .build/windows-ime-smoke -LegacyProfile -Isolated
+      - name: Upload editor screenshots and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-installed-input-preview
+          path: |
+            .build/windows-ime-smoke/*.png
+            .build/windows-ime-smoke/*.txt
+          if-no-files-found: warn
