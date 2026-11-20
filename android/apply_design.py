@@ -5,6 +5,8 @@ from pathlib import Path
 
 
 HERE = Path(__file__).resolve().parent
+THEME_FILE = HERE / "ime/shuangpin_link.trime.yaml"
+THEME_ID = THEME_FILE.stem
 
 
 def apply_edit(path, before, after):
@@ -19,7 +21,7 @@ def apply_edit(path, before, after):
 def apply_design(src, assets):
     app = src / "app/src/main"
     java = app / "java/com/osfans/trime"
-    shutil.copyfile(HERE / "ime/shuangpin_link.trime.yaml", assets / "shuangpin_link.trime.yaml")
+    shutil.copyfile(THEME_FILE, assets / THEME_FILE.name)
     for resource in ("drawable/link_mark.xml", "values/link_appearance.xml", "mipmap-anydpi-v26/link_icon.xml"):
         destination = app / "res" / resource
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -42,14 +44,26 @@ def apply_design(src, assets):
     apply_edit(app_utils, launch_entry + "        context.startActivity<MainActivity> {",
                launch_entry + "        context.startActivity<com.osfans.trime.link.LinkActivity> {")
 
+    application = java / "TrimeApplication.kt"
+    crash_handler = "            Thread.setDefaultUncaughtExceptionHandler { _, e ->"
+    apply_edit(application, crash_handler, crash_handler + """
+                for (failure in generateSequence(e) { it.cause }.take(6)) {
+                    val diagnostic = Throwable(failure.javaClass.name).apply { stackTrace = failure.stackTrace }
+                    android.util.Log.e("ShuangpinCrash", "Uncaught Android error", diagnostic)
+                }""")
+
     theme_manager = java / "data/theme/ThemeManager.kt"
-    apply_edit(theme_manager, "val selectedThemeId = prefs.selectedTheme.getValue()",
-               'val selectedThemeId = "shuangpin_link"')
+    previous_selection = 'val selectedThemeId = "shuangpin_link"'
+    original_selection = 'val selectedThemeId = prefs.selectedTheme.getValue()'
+    selection = previous_selection if previous_selection in theme_manager.read_text(encoding="utf-8") else original_selection
+    apply_edit(theme_manager, selection, f'val selectedThemeId = "{THEME_ID}"')
     apply_edit(theme_manager, "if (resolvedTheme.configId != selectedThemeId) {",
                "if (resolvedTheme.configId != prefs.selectedTheme.getValue()) {")
     theme_prefs = java / "data/theme/ThemePrefs.kt"
-    apply_edit(theme_prefs, 'SELECTED_THEME,\n            "trime",',
-               'SELECTED_THEME,\n            "shuangpin_link",')
+    previous_preference = 'SELECTED_THEME,\n            "shuangpin_link",'
+    original_preference = 'SELECTED_THEME,\n            "trime",'
+    preference = previous_preference if previous_preference in theme_prefs.read_text(encoding="utf-8") else original_preference
+    apply_edit(theme_prefs, preference, f'SELECTED_THEME,\n            "{THEME_ID}",')
     color_manager = java / "data/theme/ColorManager.kt"
     apply_edit(color_manager, "selectedSchemeId = prefs.normalModeColor.getValue(),", 'selectedSchemeId = "default",')
     apply_edit(color_manager, "followSystemDayNight = prefs.followSystemDayNight.getValue(),", "followSystemDayNight = true,")

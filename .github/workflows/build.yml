@@ -4,18 +4,26 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      android_build_run:
+        description: Smoke-test the Android APK from this existing build run
+        type: string
+        required: false
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
   relay:
+    if: ${{ !inputs.android_build_run }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: python -B -m unittest discover -s tests -v
 
   windows:
+    if: ${{ !inputs.android_build_run }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +39,7 @@ jobs:
           if-no-files-found: error
 
   android:
+    if: ${{ !inputs.android_build_run }}
     runs-on: ubuntu-latest
     env:
       BUILD_ABI: arm64-v8a,x86_64
@@ -54,6 +63,7 @@ jobs:
 
   android-ui:
     needs: android
+    if: ${{ always() && (needs.android.result == 'success' || inputs.android_build_run) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -69,6 +79,8 @@ jobs:
         with:
           name: Android-unsigned-apks
           path: .build/android-ui
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.android_build_run || github.run_id }}
       - name: Check the installed keyboard
         run: bash scripts/smoke-android-ui.sh "$(find .build/android-ui -name '*x86_64*.apk' -print -quit)" dist/android-ui
       - uses: actions/upload-artifact@v4
