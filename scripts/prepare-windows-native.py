@@ -113,12 +113,12 @@ fs::path WeaselUserDataPath() {
     replace(key_events, '#include "CandidateList.h"', '#include "CandidateList.h"\n#include "EnglishCorrection.h"')
     for test in (True, False):
         action = 'OnTestKeyDown' if test else 'OnKeyDown'
-        apply = 'false' if test else 'true'
+        handle = '' if test else '\n      && link_english::HandleSpace(this, pContext, _tfClientId)'
         replace_pattern(key_events, rf'(?m)^(STDAPI WeaselTSF::{action}\([^{{]+\{{)\n',
             lambda match: match[1] + f'''
   if (wParam == VK_SPACE && pContext && _status.ascii_mode && !_status.composing && !_fTestKeyDownPending &&
       !(_isToOpenClose && !_IsKeyboardOpen()) && !_IsKeyboardDisabled() &&
-      link_english::HandleSpace(this, pContext, _tfClientId, wParam, lParam, {apply})) {{
+      link_english::EnabledForSpace(lParam){handle}) {{
     _fTestKeyUpPending = FALSE;
     *pfEaten = TRUE;
     return S_OK;

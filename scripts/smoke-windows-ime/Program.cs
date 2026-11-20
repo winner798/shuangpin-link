@@ -246,7 +246,11 @@ internal static class Program
             }
             await WaitFor(() => editor.Text == "teh", "The editor did not receive the English literal before Space.");
             SendChord(Keys.Space);
-            await WaitFor(() => editor.Text == "the ", "The native English corrector did not replace teh on Space.");
+            try { await WaitFor(() => editor.Text == "the ", "The native English corrector did not replace teh on Space."); }
+            catch (InvalidOperationException error)
+            {
+                throw new InvalidOperationException($"English editor text after Space: [{editor.Text}]", error);
+            }
             SaveScreen(window, output, "english-corrected");
             Console.WriteLine("English mode: teh + Space committed the corrected word in an independent editor.");
         }

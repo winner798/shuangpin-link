@@ -51,37 +51,51 @@ inline bool IsPlainText(ITfContext* context, ITfRange* range, TfEditCookie edit)
 
 class SpaceEdit final : public CEditSession {
  public:
-  SpaceEdit(WeaselTSF* service, ITfContext* context, bool apply)
-      : CEditSession(service, context), apply_(apply) {}
+  SpaceEdit(WeaselTSF* service, ITfContext* context)
+      : CEditSession(service, context) {}
 
   STDMETHODIMP DoEditSession(TfEditCookie edit) override {
+    if (CorrectPreviousWord(edit))
+      return S_OK;
+
+    // An editor can grant its write lock asynchronously. Deliver the original
+    // space even if the caret or spelling changed while the request was queued.
+    com_ptr<ITfInsertAtSelection> insert;
+    HRESULT result = _pContext->QueryInterface(IID_PPV_ARGS(&insert));
+    if (FAILED(result))
+      return result;
+    return insert->InsertTextAtSelection(edit, TF_IAS_NOQUERY, L" ", 1, nullptr);
+  }
+
+ private:
+  bool CorrectPreviousWord(TfEditCookie edit) {
     TF_SELECTION selection{};
     ULONG count = 0;
     if (FAILED(_pContext->GetSelection(edit, TF_DEFAULT_SELECTION, 1, &selection, &count)) ||
         count != 1 || !selection.range)
-      return S_FALSE;
+      return false;
     com_ptr<ITfRange> caret;
     caret.Attach(selection.range);
     BOOL empty = FALSE;
     if (FAILED(caret->IsEmpty(edit, &empty)) || !empty ||
         selection.style.fInterimChar || !IsPlainText(_pContext, caret, edit))
-      return S_FALSE;
+      return false;
 
     com_ptr<ITfRange> range;
     if (FAILED(caret->Clone(&range)))
-      return S_FALSE;
+      return false;
     wchar_t buffer[32]{};
     LONG shift = 0;
     ULONG length = 0;
     if (FAILED(range->ShiftStart(edit, -static_cast<LONG>(ARRAYSIZE(buffer)), &shift, nullptr)) ||
-        FAILED(range->GetText(edit, 0, buffer, ARRAYSIZE(buffer), &length)) || length != -shift)
-      return S_FALSE;
+        FAILED(range->GetText(edit, 0, buffer, ARRAYSIZE(buffer), &length)))
+      return false;
     ULONG start = length;
     while (start && IsLetter(buffer[start - 1]))
       --start;
     if (length - start < 3 || length - start > 24 ||
         (start && !iswspace(buffer[start - 1])) || (!start && length == ARRAYSIZE(buffer)))
-      return S_FALSE;
+      return false;
 
     std::wstring_view word(buffer + start, length - start);
     std::wstring lowered(word);
@@ -97,13 +111,11 @@ class SpaceEdit final : public CEditSession {
       }
     }
     if (!uppercase && !titlecase && lowered != word)
-      return S_FALSE;
+      return false;
 
     for (const auto& [typo, spelling] : kLinkEnglishWords) {
       if (lowered != typo)
         continue;
-      if (!apply_)
-        return S_OK;
       std::wstring replacement(spelling);
       if (uppercase) {
         for (auto& letter : replacement)
@@ -112,40 +124,40 @@ class SpaceEdit final : public CEditSession {
         replacement[0] -= L'a' - L'A';
       }
       replacement.push_back(L' ');
-      if (start && (FAILED(range->ShiftStart(edit, static_cast<LONG>(start), &shift, nullptr)) ||
-                    shift != static_cast<LONG>(start)))
-        return S_FALSE;
-      if (FAILED(range->SetText(edit, 0, replacement.c_str(), static_cast<LONG>(replacement.size()))))
-        return S_FALSE;
+      const auto wordLength = static_cast<LONG>(word.size());
+      if (FAILED(range->Collapse(edit, TF_ANCHOR_END)) ||
+          FAILED(range->ShiftStart(edit, -wordLength, &shift, nullptr)) || shift != -wordLength)
+        return false;
+      if (FAILED(range->SetText(edit, TF_ST_CORRECTION, replacement.c_str(),
+                                static_cast<LONG>(replacement.size()))))
+        return false;
 
       if (SUCCEEDED(range->Collapse(edit, TF_ANCHOR_END))) {
         selection.range = range;
         _pContext->SetSelection(edit, 1, &selection);
       }
-      return S_OK;
+      return true;
     }
-    return S_FALSE;
+    return false;
   }
-
- private:
-  const bool apply_;
 };
 
-inline bool HandleSpace(WeaselTSF* service, ITfContext* context, TfClientId id,
-                        WPARAM key, LPARAM data, bool apply) {
-  if (key != VK_SPACE || (data & (1L << 30)) ||
+inline bool EnabledForSpace(LPARAM data) {
+  if ((data & (1L << 30)) ||
       ((GetKeyState(VK_SHIFT) | GetKeyState(VK_CONTROL) | GetKeyState(VK_MENU) |
         GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000))
     return false;
   DWORD enabled = 0, size = sizeof(enabled);
-  if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\ShuangpinLink\\IME", L"EnglishAutocorrect",
-                   RRF_RT_REG_DWORD, nullptr, &enabled, &size) != ERROR_SUCCESS || enabled != 1)
-    return false;
+  return RegGetValueW(HKEY_CURRENT_USER, L"Software\\ShuangpinLink\\IME", L"EnglishAutocorrect",
+                      RRF_RT_REG_DWORD, nullptr, &enabled, &size) == ERROR_SUCCESS && enabled == 1;
+}
+
+inline bool HandleSpace(WeaselTSF* service, ITfContext* context, TfClientId id) {
   com_ptr<ITfEditSession> edit;
-  edit.Attach(new SpaceEdit(service, context, apply));
+  edit.Attach(new SpaceEdit(service, context));
   HRESULT result = S_FALSE;
-  return SUCCEEDED(context->RequestEditSession(id, edit, TF_ES_SYNC | (apply ? TF_ES_READWRITE : TF_ES_READ), &result)) &&
-         result == S_OK;
+  return SUCCEEDED(context->RequestEditSession(id, edit, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, &result)) &&
+         (result == S_OK || result == TF_S_ASYNC);
 }
 
 }  // namespace link_english
