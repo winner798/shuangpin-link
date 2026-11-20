@@ -27,6 +27,38 @@ inline bool IsLetter(wchar_t c) {
   return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
 }
 
+inline std::wstring CorrectedWord(std::wstring_view word) {
+  if (word.size() < 3 || word.size() > 24)
+    return {};
+  std::wstring lowered(word);
+  bool uppercase = true;
+  bool titlecase = word.front() >= L'A' && word.front() <= L'Z';
+  for (size_t index = 0; index < word.size(); ++index) {
+    if (word[index] >= L'A' && word[index] <= L'Z') {
+      lowered[index] += L'a' - L'A';
+      if (index)
+        titlecase = false;
+    } else {
+      uppercase = false;
+    }
+  }
+  if (!uppercase && !titlecase && lowered != word)
+    return {};
+  for (const auto& [typo, spelling] : kLinkEnglishWords) {
+    if (lowered != typo)
+      continue;
+    std::wstring replacement(spelling);
+    if (uppercase) {
+      for (auto& letter : replacement)
+        letter -= L'a' - L'A';
+    } else if (titlecase) {
+      replacement[0] -= L'a' - L'A';
+    }
+    return replacement;
+  }
+  return {};
+}
+
 inline bool IsPlainText(ITfContext* context, ITfRange* range, TfEditCookie edit) {
   wchar_t name[24]{};
   HWND focus = GetFocus();
@@ -61,6 +93,28 @@ inline bool IsPlainText(ITfContext* context, ITfRange* range, TfEditCookie edit)
   }
   CoTaskMemFree(kinds);
   return text;
+}
+
+inline void CorrectCompositionCommit(ITfContext* context, TfEditCookie edit, std::wstring& commit) {
+  if (!context || commit.empty())
+    return;
+  std::wstring_view word(commit);
+  if (word.back() == L' ')
+    word.remove_suffix(1);
+  auto replacement = CorrectedWord(word);
+  if (replacement.empty())
+    return;
+  TF_SELECTION selection{};
+  ULONG count = 0;
+  if (FAILED(context->GetSelection(edit, TF_DEFAULT_SELECTION, 1, &selection, &count)) ||
+      count != 1 || !selection.range)
+    return;
+  com_ptr<ITfRange> caret;
+  caret.Attach(selection.range);
+  if (IsPlainText(context, caret, edit)) {
+    replacement.push_back(L' ');
+    commit = std::move(replacement);
+  }
 }
 
 class SpaceEdit final : public CEditSession {
@@ -112,49 +166,26 @@ class SpaceEdit final : public CEditSession {
       return false;
 
     std::wstring_view word(buffer + start, length - start);
-    std::wstring lowered(word);
-    bool uppercase = true;
-    bool titlecase = word.front() >= L'A' && word.front() <= L'Z';
-    for (size_t index = 0; index < word.size(); ++index) {
-      if (word[index] >= L'A' && word[index] <= L'Z') {
-        lowered[index] += L'a' - L'A';
-        if (index)
-          titlecase = false;
-      } else {
-        uppercase = false;
-      }
-    }
-    if (!uppercase && !titlecase && lowered != word)
+    auto replacement = CorrectedWord(word);
+    if (replacement.empty())
       return false;
 
-    for (const auto& [typo, spelling] : kLinkEnglishWords) {
-      if (lowered != typo)
-        continue;
-      std::wstring replacement(spelling);
-      if (uppercase) {
-        for (auto& letter : replacement)
-          letter -= L'a' - L'A';
-      } else if (titlecase) {
-        replacement[0] -= L'a' - L'A';
-      }
-      replacement.push_back(L' ');
-      const auto wordLength = static_cast<LONG>(word.size());
-      if (FAILED(range->Collapse(edit, TF_ANCHOR_END)) ||
-          FAILED(range->ShiftStart(edit, -wordLength, &shift, nullptr)) || shift != -wordLength)
-        return false;
-      result = range->SetText(edit, TF_ST_CORRECTION, replacement.c_str(),
-                              static_cast<LONG>(replacement.size()));
-      Trace("replace word", result);
-      if (FAILED(result))
-        return false;
+    replacement.push_back(L' ');
+    const auto wordLength = static_cast<LONG>(word.size());
+    if (FAILED(range->Collapse(edit, TF_ANCHOR_END)) ||
+        FAILED(range->ShiftStart(edit, -wordLength, &shift, nullptr)) || shift != -wordLength)
+      return false;
+    result = range->SetText(edit, TF_ST_CORRECTION, replacement.c_str(),
+                            static_cast<LONG>(replacement.size()));
+    Trace("replace word", result);
+    if (FAILED(result))
+      return false;
 
-      if (SUCCEEDED(range->Collapse(edit, TF_ANCHOR_END))) {
-        selection.range = range;
-        _pContext->SetSelection(edit, 1, &selection);
-      }
-      return true;
+    if (SUCCEEDED(range->Collapse(edit, TF_ANCHOR_END))) {
+      selection.range = range;
+      _pContext->SetSelection(edit, 1, &selection);
     }
-    return false;
+    return true;
   }
 };
 

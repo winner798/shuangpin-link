@@ -259,10 +259,6 @@ internal static class Program
                 await Task.Delay(70);
             }
             await WaitFor(() => editor.Text == "teh", "The editor did not receive the English literal before Space.");
-            SendChord(Keys.Escape);
-            await Task.Delay(200);
-            if (editor.Text != "teh")
-                throw new InvalidOperationException("The word was still in Chinese composition after switching the language bar.");
             SendChord(Keys.Space);
             try { await WaitFor(() => editor.Text == "the ", "The native English corrector did not replace teh on Space."); }
             catch (InvalidOperationException error)

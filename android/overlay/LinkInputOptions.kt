@@ -3,8 +3,8 @@ package com.osfans.trime.link
 import android.content.Context
 import android.text.InputType
 import android.util.AtomicFile
-import android.util.Log
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import com.osfans.trime.core.data.UserDataManager
 import com.osfans.trime.ime.core.TrimeInputMethodService
 import java.io.File
@@ -50,15 +50,10 @@ internal object LinkInputOptions {
         return loaded
     }
 
-    private fun skip(reason: String): Boolean {
-        Log.d("ShuangpinCorrection", reason)
-        return false
-    }
-
-    fun correctEnglish(service: TrimeInputMethodService): Boolean {
+    private fun allowedConnection(service: TrimeInputMethodService): InputConnection? {
         val settings = LinkSettings(service)
-        if (!settings.unlocked || !settings.prefs.getBoolean("englishAutocorrect", false)) return false
-        val editor = service.currentInputEditorInfo ?: return skip("No active editor")
+        if (!settings.unlocked || !settings.prefs.getBoolean("englishAutocorrect", false)) return null
+        val editor = service.currentInputEditorInfo ?: return null
         val type = editor.inputType
         val variation = type and InputType.TYPE_MASK_VARIATION
         if ((type and InputType.TYPE_MASK_CLASS) != InputType.TYPE_CLASS_TEXT ||
@@ -67,28 +62,41 @@ internal object LinkInputOptions {
                 variation != InputType.TYPE_TEXT_VARIATION_LONG_MESSAGE) ||
             (type and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS) != 0 ||
             (editor.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
-        ) return skip("The editor disallows suggestions")
-        val connection = service.currentInputConnection ?: return skip("No active input connection")
-        if (!connection.getSelectedText(0).isNullOrEmpty()) return skip("A text selection is active")
-        val before = connection.getTextBeforeCursor(WINDOW, 0)?.toString() ?: return skip("The editor did not return surrounding text")
-        val match = lastWord.find(before) ?: return skip("No full Latin word at cursor")
-        if (match.range.first == 0 && match.groupValues[1].isEmpty() && before.length == WINDOW) return false
-        val word = match.groupValues[2]
+        ) return null
+        val connection = service.currentInputConnection ?: return null
+        return connection.takeIf { it.getSelectedText(0).isNullOrEmpty() }
+    }
+
+    private fun correctedWord(context: Context, word: String): String? {
         val lowered = word.lowercase(Locale.ROOT)
-        val availableCorrections = runCatching { dictionary(service) }.getOrElse { return skip("Correction data unavailable") }
-        val replacement = availableCorrections[lowered] ?: return false
-        val corrected = when {
+        val replacement = runCatching { dictionary(context)[lowered] }.getOrNull() ?: return null
+        return when {
             word == lowered -> replacement
             word == word.uppercase(Locale.ROOT) -> replacement.uppercase(Locale.ROOT)
             word.drop(1) == lowered.drop(1) -> replacement.replaceFirstChar { it.uppercaseChar() }
-            else -> return false
+            else -> null
         }
+    }
+
+    fun correctedComposition(service: TrimeInputMethodService, raw: String): String? {
+        val connection = allowedConnection(service) ?: return null
+        val before = connection.getTextBeforeCursor(WINDOW, 0)?.toString()?.removeSuffix(raw) ?: return null
+        if (before.lastOrNull()?.isWhitespace() == false) return null
+        return correctedWord(service, raw)
+    }
+
+    fun correctEnglish(service: TrimeInputMethodService): Boolean {
+        val connection = allowedConnection(service) ?: return false
+        val before = connection.getTextBeforeCursor(WINDOW, 0)?.toString() ?: return false
+        val match = lastWord.find(before) ?: return false
+        val word = match.groupValues[2]
+        val corrected = correctedWord(service, word) ?: return false
         connection.beginBatchEdit()
         try {
-            if (!connection.deleteSurroundingText(word.length, 0)) return skip("The editor declined the replacement")
+            if (!connection.deleteSurroundingText(word.length, 0)) return false
             if (connection.commitText("$corrected ", 1)) return true
             connection.commitText(word, 1)
-            return skip("The editor declined the commit")
+            return false
         } finally {
             connection.endBatchEdit()
         }

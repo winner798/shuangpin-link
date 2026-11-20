@@ -115,19 +115,31 @@ fs::path WeaselUserDataPath() {
         action = 'OnTestKeyDown' if test else 'OnKeyDown'
         # Some TSF hosts only call OnTestKeyDown. Follow the normal input path
         # and use its pending flag so OnKeyDown cannot apply the same space twice.
-        pending = '\n    _fTestKeyDownPending = TRUE;' if test else ''
+        pending = '\n      _fTestKeyDownPending = TRUE;' if test else ''
         replace_pattern(key_events, rf'(?m)^(STDAPI WeaselTSF::{action}\([^{{]+\{{)\n',
             lambda match: match[1] + f'''
   if (wParam == VK_SPACE && !_fTestKeyDownPending)
     link_english::Trace("key event, ascii mode", S_OK, _status.ascii_mode);
   if (wParam == VK_SPACE && pContext && _status.ascii_mode && !_fTestKeyDownPending &&
       !(_isToOpenClose && !_IsKeyboardOpen()) && !_IsKeyboardDisabled() &&
-      link_english::EnabledForSpace(lParam) && link_english::HandleSpace(this, pContext, _tfClientId)) {{
-    _fTestKeyUpPending = FALSE;{pending}
-    *pfEaten = TRUE;
-    return S_OK;
+      link_english::EnabledForSpace(lParam)) {{
+    if (!_status.composing && link_english::HandleSpace(this, pContext, _tfClientId)) {{
+      _fTestKeyUpPending = FALSE;{pending}
+      *pfEaten = TRUE;
+      return S_OK;
+    }}
+    _linkEnglishContext = pContext;
   }}
 ''')
+    replace(tsf / 'WeaselTSF.h', '  weasel::Status _status;', '  weasel::Status _status;\n  com_ptr<ITfContext> _linkEnglishContext;')
+    session = tsf / 'EditSession.cpp'
+    replace(session, '#include "ResponseParser.h"', '#include "ResponseParser.h"\n#include "EnglishCorrection.h"')
+    replace(session, '  bool ok = m_client.GetResponseData(std::ref(parser));', '''  bool ok = m_client.GetResponseData(std::ref(parser));
+  if (_linkEnglishContext) {
+    if (ok && _linkEnglishContext.p == _pEditSessionContext.p)
+      link_english::CorrectCompositionCommit(_pEditSessionContext, ec, commit);
+    _linkEnglishContext.Release();
+  }''')
     globals_cpp = tsf / 'Globals.cpp'
     for old, new in (
         ('c_clsidTextService', '0xa6d4a312, 0x7df3, 0x4bd0, {0x9d, 0x84, 0xbb, 0xd2, 0x5b, 0xc6, 0x0a, 0xa1}'),

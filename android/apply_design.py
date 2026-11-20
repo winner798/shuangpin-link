@@ -125,27 +125,22 @@ def apply_design(src, assets):
 
     queued_key = "                service.postRimeJob {\n                    if (service.hookKeyboard(keyEventCode, m)) {"
     apply_edit(actions, queued_key, '''                service.postRimeJob {
-                    if (keyEventCode == KeyEvent.KEYCODE_SPACE && m == 0) {
-                        val ascii = getRuntimeOption("ascii_mode")
-                        if (ascii && com.osfans.trime.link.LinkInputOptions.correctEnglish(service)) return@postRimeJob
+                    if (keyEventCode == KeyEvent.KEYCODE_SPACE && m == 0 && getRuntimeOption("ascii_mode")) {
+                        val raw = getRawInput()
+                        val correction = com.osfans.trime.link.LinkInputOptions
+                        if (raw.isEmpty()) {
+                            if (correction.correctEnglish(service)) return@postRimeJob
+                        } else {
+                            correction.correctedComposition(service, raw)?.let {
+                                service.commitText("$it ")
+                                clearComposition()
+                                return@postRimeJob
+                            }
+                        }
                     }
                     if (service.hookKeyboard(keyEventCode, m)) {''')
 
     ime = java / "ime/core/TrimeInputMethodService.kt"
-    commit = "                    commitText(it.data.text)"
-    apply_edit(ime, commit, '''                    if (it.data.text != " " || !correctEnglishSpace()) {
-                        commitText(it.data.text)
-                    }''')
-    forwarded_key = "                                val keyCode = it.value.keyCode"
-    apply_edit(ime, forwarded_key, forwarded_key + '''
-                                if (keyCode == KeyEvent.KEYCODE_SPACE && it.modifiers.metaState == 0 &&
-                                    correctEnglishSpace()
-                                ) return@msg''')
-    messages = "    private fun handleRimeMessage(it: RimeMessage<*>) {"
-    apply_edit(ime, messages, '''    private fun correctEnglishSpace(): Boolean =
-        rime.run { statusCached.isAsciiMode } && com.osfans.trime.link.LinkInputOptions.correctEnglish(this)
-
-''' + messages)
     finish_view = "    override fun onFinishInputView(finishingInput: Boolean) {"
     apply_edit(ime, finish_view, """    override fun onWindowShown() {
         super.onWindowShown()

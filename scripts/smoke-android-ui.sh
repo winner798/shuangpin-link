@@ -204,7 +204,4 @@ adb shell input tap 530 2108
 sleep 1
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml >/dev/null
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-english.xml"
-if ! grep -F 'text="the "' "$output/android-editor-english.xml" >/dev/null; then
-    adb logcat -d -s ShuangpinCorrection:D
-    exit 1
-fi
+grep -F 'text="the "' "$output/android-editor-english.xml" >/dev/null
