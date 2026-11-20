@@ -65,6 +65,15 @@ class LinkActivity : ComponentActivity() {
             }
         })
         pane.addView(Button(this).apply {
+            text = "清空本机个人词库"
+            setOnClickListener {
+                AlertDialog.Builder(this@LinkActivity)
+                    .setMessage("清空手机学到的词条和词频，并关闭手机的共享词库？电脑上的词库仍可继续使用。")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("清空") { _, _ -> clearLearning() }.show()
+            }
+        })
+        pane.addView(Button(this).apply {
             text = "移除此手机的配对信息"
             setOnClickListener {
                 AlertDialog.Builder(this@LinkActivity).setMessage("移除后，请同时在电脑上解除手机配对。")
@@ -121,6 +130,21 @@ class LinkActivity : ComponentActivity() {
         share.isChecked = settings.prefs.getBoolean("share", true)
         pause.isEnabled = device != null
         share.isEnabled = device != null
+    }
+
+    private fun clearLearning() {
+        lifecycleScope.launch {
+            val name = "ShuangpinLinkDictionaryReset"
+            settings.prefs.edit().putBoolean("share", false).remove("dictionaryReceived").remove("dictionarySent").apply()
+            val session = RimeDaemon.createSession(name)
+            try {
+                session.runOnReady { clearLinkedDictionary() }
+                refresh()
+                status.text = "本机个人词库已清空。"
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { status.text = "清空词库未完成，请稍后重试。" }
+            finally { RimeDaemon.destroySession(name) }
+        }
     }
 
     private fun pair(payload: String) {

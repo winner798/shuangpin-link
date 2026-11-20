@@ -67,7 +67,7 @@ internal sealed class LinkWindow : Form
         var actions = new FlowLayoutPanel { AutoSize = true };
         var dictionaryActions = new FlowLayoutPanel { AutoSize = true };
         actions.Controls.AddRange([Button("启用或恢复", Connect), Button("显示配对码", Invite), Button("解除手机配对", ResetPeer)]);
-        dictionaryActions.Controls.AddRange([Button("立即同步词库", SyncNow), Button("管理本机词库", () => RimeFiles.ClearDictionary(CancellationToken.None))]);
+        dictionaryActions.Controls.AddRange([Button("立即同步词库", SyncNow), Button("清空本机词库", ClearDictionary)]);
         content.Controls.AddRange([new Label { Text = "双拼互联", Font = new Font(Font.FontFamily, 19f, FontStyle.Bold), AutoSize = true },
             status, new Label { Text = "同步服务器", AutoSize = true }, server, setupCode, actions, pause, share, learning, dictionaryActions, qr]);
         Controls.Add(content);
@@ -122,9 +122,9 @@ internal sealed class LinkWindow : Form
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
         { status.Text = "凭据无效或已撤销。"; }
         catch (HttpRequestException) { status.Text = "连接失败，请检查服务器地址或配对状态。"; }
-        catch (Exception error) when (error is ArgumentException or IOException or InvalidOperationException or CryptographicException)
+        catch (Exception error) when (error is ArgumentException or IOException or InvalidOperationException or CryptographicException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         { status.Text = "操作失败。请检查输入法安装和设备设置。"; }
-        catch (OperationCanceledException) { status.Text = "连接超时，请稍后重试。"; }
+        catch (Exception error) when (error is OperationCanceledException or TimeoutException) { status.Text = "操作超时，请稍后重试。"; }
         finally { busy = false; UpdateControls(); }
     }
 
@@ -256,7 +256,7 @@ internal sealed class LinkWindow : Form
     }
 
     static bool Retryable(Exception error, CancellationToken token) => !token.IsCancellationRequested &&
-        error is HttpRequestException or OperationCanceledException or ExternalException or IOException or CryptographicException or FormatException or ArgumentException or JsonException or InvalidOperationException;
+        error is HttpRequestException or OperationCanceledException or ExternalException or IOException or CryptographicException or FormatException or ArgumentException or JsonException or InvalidOperationException or UnauthorizedAccessException or System.ComponentModel.Win32Exception;
 
     async Task DictionaryLoop(CancellationToken token)
     {
@@ -274,6 +274,22 @@ internal sealed class LinkWindow : Form
         if (session is not { ShareDictionary: true }) { status.Text = "请先启用个人词库共享。"; return; }
         await SyncDictionary(link?.Token ?? CancellationToken.None);
         status.Text = "个人词库已检查同步。";
+    }
+
+    async Task ClearDictionary()
+    {
+        if (MessageBox.Show(this, "清空电脑学到的词条和词频，并关闭电脑的词库共享？旧词库会备份在本机。", Text,
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        if (session is { } device)
+        {
+            session = device with { ShareDictionary = false, DownloadedDictionary = 0, UploadedDictionary = null };
+            SaveSession();
+            await Restart();
+        }
+        await dictionaryGate.WaitAsync();
+        try { await RimeFiles.ClearDictionary(CancellationToken.None); }
+        finally { dictionaryGate.Release(); }
+        status.Text = "本机个人词库已清空。";
     }
 
     async Task SyncDictionary(CancellationToken token)

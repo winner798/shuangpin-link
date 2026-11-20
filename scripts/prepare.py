@@ -1,6 +1,7 @@
 """Prepare pinned upstream code/assets and apply the Shuangpin Link overlay."""
 
 import argparse
+import hashlib
 import re
 import shutil
 import subprocess
@@ -18,6 +19,12 @@ TRIME_REV = "b5cad1a49095a3652e9188982de400ca3a653f37"
 ICE_REV = "927e1cf1d3eeb9bf4be85e3f684dba4dd485b6f6"
 WEASEL_TAG = "0.17.4"
 ARCHES = ("arm64-v8a", "x86_64")
+CHECKSUMS = {
+    "weasel.exe": "cf509534a8f5f8af9c98ed7cbb8f135439f145a8cbe7e50ede42bb5b5ab45c29",
+    "predict.db": "2a5a2b7c77f8f3d7c0836dfc8fd8b791ac2574d8bd93a3a2baaae1ee4861f5be",
+    "trime-arm64.apk": "e7535ea421a25962eb2ea37c46ff867838e69d33ba6d935876ab84d108de5020",
+    "trime-x86_64.apk": "d3bfbc84a99d77e150e9918ddb9d1a348a730bdbbbea5c0c1ee4375356a6f221",
+}
 
 
 def run(*args, cwd=ROOT):
@@ -41,12 +48,16 @@ def download(name, url):
     VENDOR.mkdir(parents=True, exist_ok=True)
     target = VENDOR / name
     if target.is_file() and target.stat().st_size:
+        if hashlib.sha256(target.read_bytes()).hexdigest() != CHECKSUMS[name]:
+            raise RuntimeError(f"Cached asset checksum mismatch: {target}")
         return target
     for attempt in range(3):
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "ShuangpinLink-build/1"})
             with urllib.request.urlopen(request, timeout=60) as response, target.with_suffix(".part").open("wb") as output:
                 shutil.copyfileobj(response, output)
+            if hashlib.sha256(target.with_suffix(".part").read_bytes()).hexdigest() != CHECKSUMS[name]:
+                raise RuntimeError(f"Downloaded asset checksum mismatch: {name}")
             target.with_suffix(".part").replace(target)
             return target
         except OSError:
@@ -101,13 +112,15 @@ def extract_apk(file, native, assets, arch):
             if name.startswith(f"lib/{arch}/") and name.endswith(".so"):
                 base = PurePosixPath(name).name
                 target = native / arch / base
-            elif name.startswith("assets/shared/opencc/") and not name.endswith("/"):
+            elif name.startswith("assets/shared/") and not name.endswith("/"):
                 parts = PurePosixPath(name).parts[2:]
                 if any(part in ("..", ".") for part in parts):
                     raise ValueError("Invalid asset path")
                 target = assets.joinpath(*parts)
             else:
                 continue
+            if target.is_symlink():
+                target.unlink()
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(apk.read(name))
         if not list((native / arch).glob("*rime*.so")):
@@ -172,6 +185,31 @@ def prepare_android():
     if count != 1:
         raise RuntimeError("Trime default layout missing")
     keyboard.write_text(text, encoding="utf-8")
+    change(java / "core/RimeApi.kt", [
+        ("    suspend fun syncUserData(): Boolean", "    suspend fun clearLinkedDictionary()\n    suspend fun syncUserData(): Boolean"),
+    ])
+    change(java / "core/Rime.kt", [
+        ("    override suspend fun syncUserData(): Boolean = lock.withLock {",
+         """    override suspend fun clearLinkedDictionary(): Unit = lock.withLock {
+        withRimeContext {
+            exitRime()
+            try {
+                val user = UserDataManager.userDataDir
+                val database = java.io.File(user, "rime_ice.userdb")
+                check(!database.exists() || database.deleteRecursively())
+                val sync = java.io.File(user, "sync")
+                for (folder in sync.listFiles().orEmpty().filter { it.isDirectory }) {
+                    val snapshot = java.io.File(folder, "rime_ice.userdb.txt")
+                    check(!snapshot.exists() || snapshot.delete())
+                }
+            } finally {
+                startRime(false)
+            }
+        }
+    }
+
+    override suspend fun syncUserData(): Boolean = lock.withLock {"""),
+    ])
     service = java / "ime/core/TrimeInputMethodService.kt"
     change(service, [
         ("    private lateinit var rime: RimeSession", "    private lateinit var rime: RimeSession\n    private lateinit var clipboardLink: com.osfans.trime.link.ClipboardLink"),
