@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
 using QRCoder;
@@ -44,8 +43,6 @@ internal sealed partial class LinkWindow : Form
 {
     static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ShuangpinLink", "state");
     static readonly string StateFile = Path.Combine(DataDirectory, "device.bin");
-    static readonly UTF8Encoding Utf8 = new(false, true);
-    const int ClipLimit = 64 * 1024;
     const int DictionaryLimit = 8 * 1024 * 1024;
     readonly TextBox server = new() { Text = "https://1.15.223.20/ime-sync/" };
     readonly TextBox setupCode = new() { UseSystemPasswordChar = true };
@@ -69,17 +66,7 @@ internal sealed partial class LinkWindow : Form
     bool exiting;
     bool busy;
     bool learningEnabled = true;
-    bool applying;
-    uint appliedSequence;
-    long revision;
-    Pending? pending;
-    readonly SemaphoreSlim pendingChanged = new(0, 1);
     readonly SemaphoreSlim dictionaryGate = new(1, 1);
-    sealed record Pending(string Id, string Text, uint Sequence, DateTimeOffset Created);
-
-    [DllImport("user32.dll", SetLastError = true)] static extern bool AddClipboardFormatListener(IntPtr window);
-    [DllImport("user32.dll", SetLastError = true)] static extern bool RemoveClipboardFormatListener(IntPtr window);
-    [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
 
     internal LinkWindow(bool startHidden)
     {
@@ -99,20 +86,22 @@ internal sealed partial class LinkWindow : Form
         tray.ContextMenuStrip = new ContextMenuStrip();
         tray.ContextMenuStrip.Items.Add("打开设置", null, (_, _) => Reveal());
         tray.ContextMenuStrip.Items.Add("检查更新", null, async (_, _) => { Reveal(); updatesTab.Checked = true; await CheckForUpdates(); });
-        tray.ContextMenuStrip.Items.Add("暂停或恢复同步", null, (_, _) => pause.Checked = !pause.Checked);
+        tray.ContextMenuStrip.Items.Add("暂停或恢复剪贴板互通", null, (_, _) => pause.Checked = !pause.Checked);
         tray.ContextMenuStrip.Items.Add("退出", null, (_, _) => { exiting = true; Close(); });
         tray.DoubleClick += (_, _) => Reveal();
         qrExpiry.Tick += (_, _) => ClearQr();
 
         UpdateControls();
-        pause.CheckedChanged += async (_, _) => await RunAction(async () =>
+        pause.CheckedChanged += (_, _) =>
         {
             if (updating || session is null) return;
             session = session with { Paused = pause.Checked };
-            SaveSession();
-            pending = null;
-            await Restart();
-        });
+            RestartClipboard();
+            try { SaveSession(); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException)
+            { status.Text = "剪贴板开关在本次运行中已生效，但暂时无法保存。"; }
+            UpdateControls();
+        };
         share.CheckedChanged += async (_, _) => await RunAction(async () =>
         {
             if (updating || session is null) return;
@@ -172,57 +161,21 @@ internal sealed partial class LinkWindow : Form
         if (startHidden) Hide();
         WindowsUpdate.CleanPreviousDownloads();
         await Restart();
+        RestartClipboard();
     }
 
     internal void Reveal() { Show(); WindowState = FormWindowState.Normal; Activate(); }
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        AddClipboardFormatListener(Handle);
-    }
-
-    protected override void OnHandleDestroyed(EventArgs e)
-    {
-        RemoveClipboardFormatListener(Handle);
-        base.OnHandleDestroyed(e);
-    }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         if (!exiting && e.CloseReason == CloseReason.UserClosing)
         { e.Cancel = true; Hide(); return; }
+        StopClipboard();
         link?.Cancel();
         updateRequest?.Cancel();
         ClearQr();
         tray.Dispose();
         base.OnFormClosing(e);
-    }
-
-    protected override void WndProc(ref Message message)
-    {
-        if (message.Msg == 0x031D) ReadClipboard();
-        base.WndProc(ref message);
-    }
-
-    void ReadClipboard()
-    {
-        uint sequence = GetClipboardSequenceNumber();
-        if (applying || sequence == appliedSequence || session is not { Paused: false }) return;
-        try
-        {
-            var data = Clipboard.GetDataObject();
-            if (data is null || data.GetDataPresent("ExcludeClipboardContentFromMonitorProcessing", false)
-                || data.GetDataPresent("CanUploadToCloudClipboard", false)
-                || data.GetDataPresent("CanIncludeInClipboardHistory", false))
-            { pending = null; return; }
-            var text = Clipboard.GetText(TextDataFormat.UnicodeText);
-            if (text.Length == 0 || Utf8.GetByteCount(text) > ClipLimit)
-            { pending = null; return; }
-            pending = new Pending(Guid.NewGuid().ToString("N"), text, sequence, DateTimeOffset.UtcNow);
-            if (pendingChanged.CurrentCount == 0) pendingChanged.Release();
-        }
-        catch (Exception error) when (error is ExternalException or EncoderFallbackException) { }
     }
 
     async Task Restart()
@@ -231,68 +184,11 @@ internal sealed partial class LinkWindow : Form
         try { await Task.WhenAll(workers); }
         catch (OperationCanceledException) { }
         link?.Dispose();
+        link = null;
         workers = [];
-        if (session is not { } device) return;
+        if (session is not { ShareDictionary: true }) return;
         link = new CancellationTokenSource();
-        var relay = new Relay(device.Server, device.Device.Token);
-        CancellationToken token = link.Token;
-        List<Task> work = [];
-        if (!device.Paused)
-        {
-            work.Add(Receive(relay, device.Key, token));
-            work.Add(Upload(relay, device.Key, token));
-        }
-        if (device.ShareDictionary) work.Add(DictionaryLoop(token));
-        workers = [..work];
-    }
-
-    async Task Receive(Relay relay, string key, CancellationToken token)
-    {
-        while (!token.IsCancellationRequested)
-        {
-            uint started = GetClipboardSequenceNumber();
-            try
-            {
-                var clip = await relay.Send<Clip>(HttpMethod.Get, $"clip?after={revision}&wait=20", token);
-                if (clip is null) { connectionStatus.Text = "剪贴板同步在线"; continue; }
-                if (clip.Envelope is not null && pending is null && started == GetClipboardSequenceNumber())
-                {
-                    string text = Utf8.GetString(Relay.Open(key, "clip", clip.Envelope, ClipLimit));
-                    if (text.Length != 0)
-                    {
-                        applying = true;
-                        try { Clipboard.SetText(text); appliedSequence = GetClipboardSequenceNumber(); }
-                        finally { applying = false; }
-                    }
-                }
-                revision = clip.Revision;
-                connectionStatus.Text = "剪贴板同步在线";
-            }
-            catch (Exception error) when (Retryable(error, token))
-            {
-                connectionStatus.Text = error is HttpRequestException { StatusCode: HttpStatusCode.Unauthorized }
-                    ? "设备已解绑，请重新配对。" : "同步暂不可用，正在重试。";
-                await Task.Delay(1500, token);
-            }
-        }
-    }
-
-    async Task Upload(Relay relay, string key, CancellationToken token)
-    {
-        while (!token.IsCancellationRequested)
-        {
-            if (pending is not { } outgoing)
-            { await pendingChanged.WaitAsync(token); continue; }
-            if (DateTimeOffset.UtcNow - outgoing.Created >= TimeSpan.FromHours(24))
-            { pending = null; continue; }
-            try
-            {
-                var envelope = Relay.Seal(key, "clip", Utf8.GetBytes(outgoing.Text));
-                await relay.Send<object>(HttpMethod.Put, "clip", token, new { id = outgoing.Id, envelope });
-                if (pending == outgoing) pending = null;
-            }
-            catch (Exception error) when (Retryable(error, token)) { await Task.Delay(1500, token); }
-        }
+        workers = [DictionaryLoop(link.Token)];
     }
 
     static bool Retryable(Exception error, CancellationToken token) => !token.IsCancellationRequested &&
@@ -447,21 +343,26 @@ internal sealed partial class LinkWindow : Form
         }
         if (device is null) throw new InvalidOperationException();
         link?.Cancel();
-        await StopBeforeAccountChange();
-        session = new Session(address, device, Relay.Encode(RandomNumberGenerator.GetBytes(32)));
-        setupCode.Clear();
-        SaveSession();
-        status.Text = "已绑定服务器，可配对手机。";
-        await Restart();
+        try
+        {
+            await StopBeforeAccountChange();
+            session = new Session(address, device, Relay.Encode(RandomNumberGenerator.GetBytes(32)));
+            setupCode.Clear();
+            SaveSession();
+            status.Text = "已绑定服务器，可配对手机。";
+            await Restart();
+        }
+        finally { changingClipboardPair = false; RestartClipboard(); }
         await Invite();
     }
 
     async Task StopBeforeAccountChange()
     {
+        changingClipboardPair = true;
+        StopClipboard();
+        lastClipboardSentAt = 0;
         try { await Task.WhenAll(workers); }
         catch (OperationCanceledException) { }
-        pending = null;
-        revision = 0;
         ClearQr();
     }
 
@@ -502,14 +403,15 @@ internal sealed partial class LinkWindow : Form
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         var relay = new Relay(device.Server, device.Device.Token);
         link?.Cancel();
-        await StopBeforeAccountChange();
         try
         {
+            await StopBeforeAccountChange();
             await relay.Send<object>(HttpMethod.Post, "reset-peer", CancellationToken.None);
-            session = device with { Key = Relay.Encode(RandomNumberGenerator.GetBytes(32)), DownloadedDictionary = 0, UploadedDictionary = null };
+            session = session! with { Key = Relay.Encode(RandomNumberGenerator.GetBytes(32)), DownloadedDictionary = 0,
+                UploadedDictionary = null, AcceptedClipboardTime = 0 };
             SaveSession();
         }
-        finally { await Restart(); }
+        finally { changingClipboardPair = false; await Restart(); RestartClipboard(); }
         status.Text = "手机配对已解除。";
     }
 
@@ -520,10 +422,10 @@ internal sealed partial class LinkWindow : Form
         {
             pause.Checked = device.Paused;
             share.Checked = device.ShareDictionary;
-            if (device.Paused) connectionStatus.Text = "剪贴板同步已暂停";
-            else if (connectionStatus.Text is "尚未绑定服务器" or "剪贴板同步已暂停")
-                connectionStatus.Text = "已绑定服务器，正在连接";
         }
+        if (session is null) connectionStatus.Text = "尚未绑定服务器";
+        else if (session.Paused) connectionStatus.Text = "剪贴板互通已暂停";
+        else if (!clipboardPeerReady) connectionStatus.Text = "已绑定服务器，正在确认配对";
         learning.Checked = learningEnabled;
         pause.Enabled = share.Enabled = session is not null;
         if (session is not null && server.Text.Length == 0) server.Text = session.Server;
@@ -534,13 +436,17 @@ internal sealed partial class LinkWindow : Form
     {
         if (!File.Exists(StateFile)) return null;
         byte[] data = ProtectedData.Unprotect(File.ReadAllBytes(StateFile), null, DataProtectionScope.CurrentUser);
-        return JsonSerializer.Deserialize<Session>(data, Relay.Json);
+        try { return JsonSerializer.Deserialize<Session>(data, Relay.Json); }
+        finally { CryptographicOperations.ZeroMemory(data); }
     }
 
     void SaveSession()
     {
         Directory.CreateDirectory(DataDirectory);
-        byte[] data = ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(session, Relay.Json), null, DataProtectionScope.CurrentUser);
+        byte[] plain = JsonSerializer.SerializeToUtf8Bytes(session, Relay.Json);
+        byte[] data;
+        try { data = ProtectedData.Protect(plain, null, DataProtectionScope.CurrentUser); }
+        finally { CryptographicOperations.ZeroMemory(plain); }
         File.WriteAllBytes(StateFile + ".tmp", data);
         File.Move(StateFile + ".tmp", StateFile, overwrite: true);
     }

@@ -20,7 +20,12 @@ from urllib.parse import parse_qs, urlsplit
 
 CLIP_LIMIT = 64 * 1024
 DICTIONARY_LIMIT = 8 * 1024 * 1024
-CLIP_TTL = 24 * 3600
+CLIP_TTL = 10 * 60
+RECEIPT_TTL = 24 * 3600
+CLIP_TTL_MS = CLIP_TTL * 1000
+CLIP_CLOCK_AHEAD_MS = 120 * 1000
+DAILY_CLIP_LIMIT = 20000
+CLEANUP_INTERVAL = 30
 INVITE_TTL = 5 * 60
 ID_PATTERN = re.compile(r"[a-f0-9]{32}\Z")
 UPDATE_DIRECTORY = Path("/opt/shuangpin-link/updates")
@@ -48,6 +53,10 @@ def credential():
     return secrets.token_urlsafe(32)
 
 
+def epoch_ms():
+    return time.time_ns() // 1_000_000
+
+
 class Store:
     def __init__(self, filename, setup_hash):
         self.filename = filename
@@ -66,15 +75,28 @@ class Store:
                     expiry INTEGER NOT NULL, envelope TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS received (event_id TEXT PRIMARY KEY, expiry INTEGER);
+                CREATE TABLE IF NOT EXISTS clipboard_v2 (
+                    revision INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL, sender TEXT NOT NULL CHECK (sender IN ('owner', 'peer')),
+                    sent_at INTEGER NOT NULL, expiry INTEGER NOT NULL, envelope TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS received_v2 (event_id TEXT PRIMARY KEY, expiry INTEGER);
                 CREATE TABLE IF NOT EXISTS dictionary (
                     sender TEXT PRIMARY KEY REFERENCES device(id) ON DELETE CASCADE,
                     version INTEGER NOT NULL, envelope TEXT NOT NULL
                 );
             """)
+        with self.database(write=True) as db:
+            # Older relays gave clipboard data the same lifetime as its retry receipt.
+            # Reuse the receipt to recover the original send time without adding timestamps.
+            db.execute("""UPDATE clipboard SET expiry = MIN(expiry, COALESCE((
+                            SELECT expiry - ? FROM received WHERE event_id = clipboard.event_id
+                          ), 0))""", (RECEIPT_TTL - CLIP_TTL,))
+            self.purge(db, epoch_ms())
 
     @contextmanager
-    def database(self, write=False):
-        db = sqlite3.connect(self.filename, timeout=5)
+    def database(self, write=False, *, timeout=5):
+        db = sqlite3.connect(self.filename, timeout=timeout)
         db.row_factory = sqlite3.Row
         try:
             db.execute("PRAGMA foreign_keys = ON")
@@ -92,6 +114,12 @@ class Store:
         if row is None:
             raise RequestError(401, "invalid_credential")
         return row
+
+    def paired_role(self, db, token):
+        role = self.identify(db, token)["role"]
+        if db.execute("SELECT 1 FROM device WHERE role != ?", (role,)).fetchone() is None:
+            raise RequestError(409, "peer_required")
+        return role
 
     @staticmethod
     def enroll(db, role):
@@ -148,42 +176,83 @@ class Store:
     @staticmethod
     def clear_pair(db):
         db.execute("DELETE FROM device WHERE role = 'peer'")
-        for table in ("invite", "clipboard", "received", "dictionary"):
+        for table in ("invite", "clipboard", "received", "clipboard_v2", "received_v2", "dictionary"):
             db.execute(f"DELETE FROM {table}")
 
     @staticmethod
-    def purge(db, now):
+    def purge(db, now_ms):
+        now = now_ms // 1000
         db.execute("DELETE FROM clipboard WHERE expiry <= ?", (now,))
         db.execute("DELETE FROM received WHERE expiry <= ?", (now,))
+        db.execute("DELETE FROM clipboard_v2 WHERE expiry <= ?", (now_ms,))
+        db.execute("DELETE FROM received_v2 WHERE expiry <= ?", (now_ms,))
         db.execute("DELETE FROM invite WHERE expiry <= ?", (now,))
 
     def put_clip(self, token, event_id, envelope):
-        now = int(time.time())
+        now_ms = epoch_ms()
+        now = now_ms // 1000
         with self.database(write=True) as db:
             sender = self.identify(db, token)["id"]
-            self.purge(db, now)
+            self.purge(db, now_ms)
             if db.execute("SELECT 1 FROM received WHERE event_id = ?", (event_id,)).fetchone():
                 return
-            if db.execute("SELECT COUNT(*) FROM received").fetchone()[0] >= 20000:
+            if db.execute("SELECT COUNT(*) FROM received").fetchone()[0] >= DAILY_CLIP_LIMIT:
                 raise RequestError(429, "daily_clip_limit")
-            db.execute("INSERT INTO received VALUES (?, ?)", (event_id, now + CLIP_TTL))
+            db.execute("INSERT INTO received VALUES (?, ?)", (event_id, now + RECEIPT_TTL))
             db.execute("DELETE FROM clipboard")
             db.execute("INSERT INTO clipboard (event_id, sender, expiry, envelope) VALUES (?, ?, ?, ?)",
                        (event_id, sender, now + CLIP_TTL, envelope))
         with self.changed:
             self.changed.notify_all()
 
-    def get_clip(self, token, after, wait):
+    def put_clip_v2(self, token, event_id, sent_at, envelope):
+        with self.database(write=True) as db:
+            sender = self.paired_role(db, token)
+            now = epoch_ms()
+            if not now - CLIP_TTL_MS < sent_at <= now + CLIP_CLOCK_AHEAD_MS:
+                raise RequestError(400, "invalid_timestamp")
+            self.purge(db, now)
+            if db.execute("SELECT 1 FROM received_v2 WHERE event_id = ?", (event_id,)).fetchone():
+                return
+            if db.execute("SELECT COUNT(*) FROM received_v2").fetchone()[0] >= DAILY_CLIP_LIMIT:
+                raise RequestError(429, "daily_clip_limit")
+            expiry = min(now, sent_at) + CLIP_TTL_MS
+            db.execute("INSERT INTO received_v2 VALUES (?, ?)", (event_id, now + RECEIPT_TTL * 1000))
+            db.execute("DELETE FROM clipboard_v2")
+            db.execute("""INSERT INTO clipboard_v2 (event_id, sender, sent_at, expiry, envelope)
+                          VALUES (?, ?, ?, ?, ?)""", (event_id, sender, sent_at, expiry, envelope))
+        with self.changed:
+            self.changed.notify_all()
+
+    def read_clip(self, db, token, after):
+        sender = self.identify(db, token)["id"]
+        row = db.execute("""SELECT revision, sender, envelope FROM clipboard
+                          WHERE revision > ? AND expiry > ?""", (after, epoch_ms() // 1000)).fetchone()
+        if row is None:
+            return None
+        return {"revision": row["revision"], "envelope": row["envelope"] if row["sender"] != sender else None}
+
+    def read_clip_v2(self, db, token, after):
+        receiver = self.paired_role(db, token)
+        row = db.execute("""SELECT revision, event_id AS id, sender, sent_at AS sentAt, envelope
+                          FROM clipboard_v2 WHERE revision > ? AND expiry > ?""", (after, epoch_ms())).fetchone()
+        if row is None:
+            return None
+        if row["sender"] == receiver:
+            return {"revision": row["revision"], "envelope": None}
+        return dict(row)
+
+    def get_clip(self, token, after, wait, *, v2=False):
+        read = self.read_clip_v2 if v2 else self.read_clip
         deadline = time.monotonic() + wait
         with self.changed:
             while True:
                 with self.database() as db:
-                    sender = self.identify(db, token)["id"]
-                    row = db.execute("""SELECT revision, sender, envelope FROM clipboard
-                                      WHERE revision > ? AND expiry > ?""", (after, int(time.time()))).fetchone()
-                if row:
-                    return {"revision": row["revision"],
-                            "envelope": row["envelope"] if row["sender"] != sender else None}
+                    # Read authorization and the clipboard from the same database snapshot.
+                    db.execute("BEGIN")
+                    result = read(db, token, after)
+                if result is not None:
+                    return result
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return None
@@ -214,9 +283,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def reply_headers(self, status, size, content_type=None):
         self.send_response(status)
-        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(size))
         if content_type:
             self.send_header("Content-Type", content_type)
@@ -327,18 +399,24 @@ class Handler(BaseHTTPRequestHandler):
             return 204, None
         if route == ("POST", "/v1/recover"):
             return 201, store.recover(self.token())
-        if route == ("GET", "/v1/clip"):
+        if self.command == "GET" and url.path in ("/v1/clip", "/v2/clip"):
             after = self.integer(query.get("after", ["0"])[0], 10**18 - 1)
             wait = self.integer(query.get("wait", ["0"])[0], 20)
-            result = store.get_clip(self.token(), after, wait)
+            result = store.get_clip(self.token(), after, wait, v2=url.path == "/v2/clip")
             return (200, result) if result else (204, None)
-        if route == ("PUT", "/v1/clip"):
+        if self.command == "PUT" and url.path in ("/v1/clip", "/v2/clip"):
             token = self.token()
             value = self.payload(CLIP_LIMIT)
             event_id = value.get("id")
             if not isinstance(event_id, str) or not ID_PATTERN.fullmatch(event_id):
                 raise RequestError(400, "invalid_event")
-            store.put_clip(token, event_id, value["envelope"])
+            if url.path == "/v2/clip":
+                sent_at = value.get("sentAt")
+                if type(sent_at) is not int:
+                    raise RequestError(400, "invalid_timestamp")
+                store.put_clip_v2(token, event_id, sent_at, value["envelope"])
+            else:
+                store.put_clip(token, event_id, value["envelope"])
             return 204, None
         if route == ("PUT", "/v1/dictionary"):
             token = self.token()
@@ -377,7 +455,7 @@ class Relay(ThreadingHTTPServer):
         self.store = store
         self.updates_dir = updates_dir
         self.slots = threading.BoundedSemaphore(12)
-        self.last_cleanup = 0
+        self.next_cleanup = 0.0
         super().__init__(address, Handler)
 
     def current_release(self):
@@ -416,15 +494,15 @@ class Relay(ThreadingHTTPServer):
             self.slots.release()
 
     def service_actions(self):
-        now = int(time.time())
-        if now - self.last_cleanup < 60:
+        now = time.monotonic()
+        if now < self.next_cleanup:
             return
         try:
-            with self.store.database(write=True) as db:
-                self.store.purge(db, now)
-            self.last_cleanup = now
+            with self.store.database(write=True, timeout=0.2) as db:
+                self.store.purge(db, epoch_ms())
+            self.next_cleanup = now + CLEANUP_INTERVAL
         except sqlite3.Error:
-            self.last_cleanup = now - 45
+            self.next_cleanup = now + 5
 
 
 def main():

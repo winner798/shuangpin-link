@@ -1,9 +1,9 @@
 package com.osfans.trime.link
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
+import android.app.KeyguardManager
 import android.content.SharedPreferences
+import android.inputmethodservice.InputMethodService
+import android.os.PowerManager
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
 import com.osfans.trime.core.data.UserDataManager
@@ -12,7 +12,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -22,7 +21,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
-import java.util.UUID
 
 internal fun sensitiveEditor(info: EditorInfo?): Boolean {
     val input = info ?: return false
@@ -37,143 +35,77 @@ internal fun sensitiveEditor(info: EditorInfo?): Boolean {
     }
 }
 
-internal class ClipboardLink(context: Context, private val scope: CoroutineScope, private val rime: RimeSession) {
-    private val settings = LinkSettings(context)
-    private val clipboard = requireNotNull(context.getSystemService(ClipboardManager::class.java))
-    private val signal = Channel<Unit>(Channel.CONFLATED)
+internal class ClipboardLink(ime: InputMethodService, private val scope: CoroutineScope, private val rime: RimeSession) {
+    private val settings = LinkSettings(ime)
     private val dictionaryLock = Mutex()
-    private var pending: Outgoing? = null
-    private var run: Job? = null
+    private var dictionaryJob: Job? = null
     private var registered = false
     private var sensitive = false
-    private var localChanges = 0L
-    private var revision = 0L
-    private var lastObserved: String? = null
-    private val listener = ClipboardManager.OnPrimaryClipChangedListener { capture(force = true) }
+    private var inputViewActive = false
+    private val power = ime.getSystemService(PowerManager::class.java)
+    private val keyguard = ime.getSystemService(KeyguardManager::class.java)
+    private val clipboard = LinkClipboard(ime, settings, scope) {
+        val editor = ime.currentInputEditorInfo
+        inputViewActive && ime.isInputViewShown && ime.currentInputConnection != null &&
+            editor != null && editor.inputType != InputType.TYPE_NULL && !sensitiveEditor(editor) &&
+            power?.isInteractive == true && keyguard?.isDeviceLocked == false
+    }
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key in setOf("device", "paused", "share")) {
-            if (key == "device") revision = 0
-            refresh()
+        if (key == "device" || key == "paused") {
+            clipboard.stop()
+            clipboard.start()
         }
+        if (key == "device" || key == "share") refreshDictionarySync()
         if (key == "syncNow") scope.launch { syncDictionarySafely() }
     }
-
-    private data class Outgoing(val id: String, val text: String, val timestamp: Long)
 
     fun start() {
         if (registered || !settings.unlocked) return
         registered = true
         settings.prefs.registerOnSharedPreferenceChangeListener(preferenceListener)
-        clipboard.addPrimaryClipChangedListener(listener)
-        // Establish a baseline without sending clipboard contents from before pairing.
-        lastObserved = currentText()
-        refresh()
+        refreshDictionarySync()
     }
 
     fun editor(info: EditorInfo?) {
-        start()
+        suspendClipboard()
+        updateEditorPrivacy(info)
+    }
+
+    private fun updateEditorPrivacy(info: EditorInfo?) {
         val wasSensitive = sensitive
         sensitive = sensitiveEditor(info)
-        if (sensitive) pending = null
-        if (registered && wasSensitive != sensitive) refresh()
+        if (!registered) start()
+        else if (wasSensitive != sensitive) refreshDictionarySync()
     }
 
     fun resume(info: EditorInfo?) {
-        editor(info)
-        if (!sensitive) capture(force = false)
+        updateEditorPrivacy(info)
+        inputViewActive = true
+        clipboard.start()
+    }
+
+    fun windowShown() = clipboard.start()
+
+    fun suspendClipboard() {
+        inputViewActive = false
+        clipboard.stop()
     }
 
     fun close() {
-        run?.cancel()
-        if (registered) {
-            settings.prefs.unregisterOnSharedPreferenceChangeListener(preferenceListener)
-            clipboard.removePrimaryClipChangedListener(listener)
-        }
-        signal.close()
+        suspendClipboard()
+        dictionaryJob?.cancel()
+        if (registered) settings.prefs.unregisterOnSharedPreferenceChangeListener(preferenceListener)
     }
 
-    private fun currentText(): String? = runCatching {
-        val clip = clipboard.primaryClip ?: return null
-        val description = clip.description
-        if (description.label?.toString() == REMOTE_LABEL || clip.itemCount != 1 ||
-            description.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true
-        ) return null
-        val item = clip.getItemAt(0)
-        val text = item.text?.toString() ?: item.uri?.takeIf { it.scheme == "https" || it.scheme == "http" }?.toString()
-        text?.takeIf { it.isNotEmpty() && it.toByteArray().size <= CLIP_LIMIT }
-    }.getOrNull()
-
-    private fun capture(force: Boolean) {
-        if (sensitive || !registered) return
-        val text = currentText()
-        if (text == null) {
-            if (runCatching { clipboard.primaryClipDescription?.label?.toString() }.getOrNull() != REMOTE_LABEL) {
-                localChanges++
-                pending = null
+    private fun refreshDictionarySync() {
+        dictionaryJob?.cancel()
+        if (sensitive || !settings.prefs.getBoolean("share", true) || settings.device() == null) return
+        dictionaryJob = scope.launch {
+            delay(10_000)
+            while (isActive) {
+                syncDictionarySafely()
+                delay(10 * 60 * 1000L)
             }
-            return
-        }
-        if (!force && text == lastObserved) return
-        lastObserved = text
-        localChanges++
-        if (settings.prefs.getBoolean("paused", false) || settings.device() == null) return
-        pending = Outgoing(UUID.randomUUID().toString().replace("-", ""), text, System.currentTimeMillis())
-        signal.trySend(Unit)
-    }
-
-    private fun refresh() {
-        run?.cancel()
-        pending = null
-        if (sensitive) return
-        val device = settings.device() ?: return
-        val client = LinkHttp(device.server, device.token)
-        run = scope.launch {
-            if (!settings.prefs.getBoolean("paused", false)) {
-                launch { receive(client, device) }
-                launch { upload(client, device) }
-            }
-            if (settings.prefs.getBoolean("share", true)) launch {
-                delay(10000)
-                while (isActive) {
-                    syncDictionarySafely()
-                    delay(10 * 60 * 1000L)
-                }
-            }
-        }
-    }
-
-    private suspend fun receive(client: LinkHttp, device: LinkDevice) {
-        while (true) {
-            val started = localChanges
-            try {
-                val data = client.call("GET", "clip?after=$revision&wait=20") ?: continue
-                if (!sensitive && pending == null && started == localChanges && !data.isNull("envelope")) {
-                    val text = String(Sealing.open(device.key, "clip", data.getString("envelope"), CLIP_LIMIT), Charsets.UTF_8)
-                    if (text.isNotEmpty()) clipboard.setPrimaryClip(ClipData.newPlainText(REMOTE_LABEL, text))
-                }
-                revision = data.getLong("revision")
-            } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { delay(1500) }
-        }
-    }
-
-    private suspend fun upload(client: LinkHttp, device: LinkDevice) {
-        while (true) {
-            val item = pending
-            if (item == null) {
-                signal.receive()
-                continue
-            }
-            if (System.currentTimeMillis() - item.timestamp >= 24 * 60 * 60 * 1000L) {
-                pending = null
-                continue
-            }
-            try {
-                val envelope = Sealing.seal(device.key, "clip", item.text.toByteArray())
-                client.call("PUT", "clip", JSONObject().put("id", item.id).put("envelope", envelope))
-                if (pending == item) pending = null
-            } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { delay(1500) }
         }
     }
 

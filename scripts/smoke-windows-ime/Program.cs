@@ -4,6 +4,7 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32;
+using ShuangpinLink;
 
 internal static class Program
 {
@@ -89,6 +90,7 @@ internal static class Program
                     await Task.Delay(550);
 
                     await AssertCommit(window, editor, args[0], "nihao", "full-pinyin");
+                    AssertClipboardPrivacy(window.Handle);
                     status = 0;
                 }
                 finally
@@ -114,6 +116,26 @@ internal static class Program
 
     private static object CreateComObject(Guid clsid) =>
         Activator.CreateInstance(Type.GetTypeFromCLSID(clsid, throwOnError: true)!)!;
+
+    private static void AssertClipboardPrivacy(nint window)
+    {
+        const string protectedText = "剪贴板隐私测试";
+        const string newerText = "本机刚复制的测试文字";
+        try
+        {
+            uint original = PrivateClipboard.Sequence;
+            if (!PrivateClipboard.Write(window, original, protectedText))
+                throw new InvalidOperationException("The synthetic clipboard changed unexpectedly.");
+            if (Clipboard.GetText() != protectedText || Clipboard.GetDataObject() is not { } data || !PrivateClipboard.IsProtected(data))
+                throw new InvalidOperationException("The clipboard write did not preserve text and its system privacy marker.");
+            uint beforeLocalCopy = PrivateClipboard.Sequence;
+            Clipboard.SetText(newerText);
+            if (PrivateClipboard.Write(window, beforeLocalCopy, protectedText) || Clipboard.GetText() != newerText)
+                throw new InvalidOperationException("Receiving text overwrote a newer local clipboard entry.");
+            Console.WriteLine("Clipboard privacy marker and protection against overwriting a newer copy verified.");
+        }
+        finally { Clipboard.Clear(); }
+    }
 
     private static int LegacyTipFixture(bool seed)
     {

@@ -52,13 +52,17 @@ internal class LinkHttp(server: String, private val token: String) {
         require(it.scheme == "https" && it.host != null && it.userInfo == null && it.query == null && it.fragment == null)
     }
 
-    fun connection(method: String, route: String): HttpsURLConnection {
-        val conn = base.resolve("v1/$route").toURL().openConnection() as HttpsURLConnection
+    fun connection(method: String, route: String, apiVersion: Int = 1): HttpsURLConnection {
+        val conn = base.resolve("v$apiVersion/$route").toURL().openConnection() as HttpsURLConnection
         conn.requestMethod = method
         conn.connectTimeout = 7000
         conn.readTimeout = 26000
         conn.instanceFollowRedirects = false
         conn.setRequestProperty("Authorization", "Bearer $token")
+        if (apiVersion == 2) {
+            conn.useCaches = false
+            conn.setRequestProperty("Cache-Control", "no-store")
+        }
         return conn
     }
 
@@ -67,8 +71,9 @@ internal class LinkHttp(server: String, private val token: String) {
         route: String,
         body: JSONObject? = null,
         responseLimit: Int = (DICT_LIMIT + 128) * 4 / 3 + 256,
+        apiVersion: Int = 1,
     ): JSONObject? = withContext(Dispatchers.IO) {
-        val conn = connection(method, route)
+        val conn = connection(method, route, apiVersion)
         try {
             if (body != null) {
                 val bytes = body.toString().toByteArray()
@@ -100,6 +105,7 @@ internal class LinkHttp(server: String, private val token: String) {
 
 internal class LinkHttpError(val code: Int) : IOException("HTTP $code")
 internal data class LinkDevice(val server: String, val token: String, val key: String)
+internal data class ClipboardPairing(val record: String, val device: LinkDevice)
 
 internal class LinkSettings(context: Context) {
     private val app = context.applicationContext
@@ -117,27 +123,37 @@ internal class LinkSettings(context: Context) {
         }
     }
 
-    fun device(): LinkDevice? {
-        if (!unlocked) return null
-        val record = prefs.getString("device", null) ?: return null
-        return runCatching {
-            val data = decode(record)
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, wrappingKey(), GCMParameterSpec(128, data, 0, 12))
-            val json = JSONObject(String(cipher.doFinal(data, 12, data.size - 12), Charsets.UTF_8))
-            LinkDevice(json.getString("server"), json.getString("token"), json.getString("key"))
-        }.getOrNull()
+    private fun storedDevice() = if (unlocked) prefs.getString("device", null) else null
+
+    fun device(): LinkDevice? = storedDevice()?.let(::openDevice)
+
+    fun clipboardPairing(): ClipboardPairing? = storedDevice()?.let { record ->
+        openDevice(record)?.let { ClipboardPairing(record, it) }
     }
+
+    fun allowsClipboard(record: String) = storedDevice() == record && !prefs.getBoolean("paused", false)
+
+    fun recordClipboardReceipt(record: String, sentAt: Long): Boolean =
+        allowsClipboard(record) && sentAt > prefs.getLong("clipboardReceivedAtV2", 0) &&
+            prefs.edit().putLong("clipboardReceivedAtV2", sentAt).commit()
+
+    private fun openDevice(record: String): LinkDevice? = runCatching {
+        val data = decode(record)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, wrappingKey(), GCMParameterSpec(128, data, 0, 12))
+        val json = JSONObject(String(cipher.doFinal(data, 12, data.size - 12), Charsets.UTF_8))
+        LinkDevice(json.getString("server"), json.getString("token"), json.getString("key"))
+    }.getOrNull()
 
     fun save(device: LinkDevice) {
         val json = JSONObject().put("server", device.server).put("token", device.token).put("key", device.key)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, wrappingKey()) }
         val record = encode(cipher.iv + cipher.doFinal(json.toString().toByteArray()))
-        check(prefs.edit().remove("dictionaryReceived").remove("dictionarySent").putBoolean("paused", false)
+        check(prefs.edit().remove("dictionaryReceived").remove("dictionarySent").remove("clipboardReceivedAtV2")
             .putBoolean("share", true).putString("device", record).commit())
     }
 
     fun forget() {
-        prefs.edit().remove("dictionaryReceived").remove("dictionarySent").remove("device").apply()
+        prefs.edit().remove("dictionaryReceived").remove("dictionarySent").remove("clipboardReceivedAtV2").remove("device").apply()
     }
 }

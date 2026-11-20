@@ -9,16 +9,16 @@ namespace ShuangpinLink;
 
 internal sealed record Device(string Id, string Token);
 internal sealed record Invitation(string Invite, int ExpiresIn);
-internal sealed record Clip(long Revision, string? Envelope);
+internal sealed record Clip(long Revision, string? Id, string? Sender, long SentAt, string? Envelope);
 internal sealed record Snapshot(string Sender, long Version, string Envelope);
 internal sealed record Pairing(int V, string Server, string Invite, string Key);
 internal sealed record Session(string Server, Device Device, string Key,
     bool Paused = false, bool ShareDictionary = true, long DownloadedDictionary = 0,
-    string? UploadedDictionary = null);
+    string? UploadedDictionary = null, long AcceptedClipboardTime = 0);
 
 internal sealed class Relay
 {
-    static readonly HttpClient Http = new(new HttpClientHandler { AllowAutoRedirect = false })
+    static readonly HttpClient Http = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
     {
         Timeout = TimeSpan.FromSeconds(27)
     };
@@ -36,31 +36,44 @@ internal sealed class Relay
         this.token = token;
     }
 
-    internal async Task<T?> Send<T>(HttpMethod method, string path, CancellationToken cancel, object? body = null)
+    internal async Task<T?> Send<T>(HttpMethod method, string path, CancellationToken cancel, object? body = null,
+        string protocol = "v1")
     {
-        using var request = CreateRequest(method, path);
+        using var request = CreateRequest(method, path, protocol);
         if (body is not null)
         {
             request.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(body, Json));
             request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         }
-        using var response = await Http.SendAsync(request, cancel);
+        using var deadline = protocol == "v2" ? CancellationTokenSource.CreateLinkedTokenSource(cancel) : null;
+        deadline?.CancelAfter(TimeSpan.FromSeconds(27));
+        var token = deadline?.Token ?? cancel;
+        using var response = await Http.SendAsync(request,
+            deadline is null ? HttpCompletionOption.ResponseContentRead : HttpCompletionOption.ResponseHeadersRead, token);
         if (response.StatusCode == HttpStatusCode.NoContent) return default;
         response.EnsureSuccessStatusCode();
+        if (deadline is not null)
+        {
+            await using var stream = await response.Content.ReadAsStreamAsync(token);
+            var bytes = new byte[88 * 1024 + 1];
+            int length = await stream.ReadAtLeastAsync(bytes.AsMemory(), bytes.Length, false, token);
+            if (length == bytes.Length) throw new InvalidDataException("中继返回的剪贴板响应过大。");
+            return JsonSerializer.Deserialize<T>(bytes.AsSpan(0, length), Json);
+        }
         return await response.Content.ReadFromJsonAsync<T>(Json, cancel);
     }
 
     internal async Task<HttpResponseMessage> GetStream(string path, CancellationToken cancel)
     {
         using var request = CreateRequest(HttpMethod.Get, path);
-        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
         return await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel);
     }
 
-    HttpRequestMessage CreateRequest(HttpMethod method, string path)
+    HttpRequestMessage CreateRequest(HttpMethod method, string path, string protocol = "v1")
     {
-        var request = new HttpRequestMessage(method, new Uri(server, "v1/" + path));
+        var request = new HttpRequestMessage(method, new Uri(server, protocol + "/" + path));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
         return request;
     }
 
@@ -69,7 +82,7 @@ internal sealed class Relay
     {
         byte[] result = new byte[12 + body.Length + 16];
         RandomNumberGenerator.Fill(result.AsSpan(0, 12));
-        using var cipher = new AesGcm(Convert.FromBase64String(key), 16);
+        using var cipher = CreateCipher(key);
         cipher.Encrypt(result.AsSpan(0, 12), body, result.AsSpan(12, body.Length),
             result.AsSpan(12 + body.Length), Encoding.UTF8.GetBytes("ime-sync/v1/" + kind));
         return Encode(result);
@@ -81,9 +94,28 @@ internal sealed class Relay
         if (encoded.Length < 28 || encoded.Length > limit + 28)
             throw new InvalidDataException("内容长度错误。");
         byte[] result = new byte[encoded.Length - 28];
-        using var cipher = new AesGcm(Convert.FromBase64String(key), 16);
-        cipher.Decrypt(encoded.AsSpan(0, 12), encoded.AsSpan(12, result.Length),
-            encoded.AsSpan(12 + result.Length), result, Encoding.UTF8.GetBytes("ime-sync/v1/" + kind));
-        return result;
+        try
+        {
+            using var cipher = CreateCipher(key);
+            cipher.Decrypt(encoded.AsSpan(0, 12), encoded.AsSpan(12, result.Length),
+                encoded.AsSpan(12 + result.Length), result, Encoding.UTF8.GetBytes("ime-sync/v1/" + kind));
+            return result;
+        }
+        catch
+        {
+            CryptographicOperations.ZeroMemory(result);
+            throw;
+        }
+    }
+
+    static AesGcm CreateCipher(string key)
+    {
+        byte[] bytes = Convert.FromBase64String(key);
+        try
+        {
+            if (bytes.Length != 32) throw new CryptographicException("设备加密密钥无效。");
+            return new AesGcm(bytes, 16);
+        }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 }

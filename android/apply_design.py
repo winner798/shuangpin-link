@@ -51,6 +51,27 @@ def apply_design(src, assets):
                     val diagnostic = Throwable(failure.javaClass.name).apply { stackTrace = failure.stackTrace }
                     android.util.Log.e("ShuangpinCrash", "Uncaught Android error", diagnostic)
                 }""")
+    old_manual = "            // Clipboard sharing is manual and does not start the local history collector."
+    history_start = old_manual if old_manual in application.read_text(encoding="utf-8") else "            ClipboardHelper.init(ctx)"
+    apply_edit(application, history_start,
+               "            // Clipboard synchronization does not start the local history collector.")
+
+    actions = java / "ime/keyboard/CommonKeyboardActionListener.kt"
+    apply_edit(actions, '"clipboard_window" -> handleClipboardWindow(arg)',
+               '"clipboard_window" -> openLinkClipboard()')
+    apply_edit(actions, "                    windowManager.attachWindow(ClipboardWindow(di))",
+               "                    openLinkClipboard()")
+    apply_edit(actions, """            private fun handleClipboardWindow(arg: String) {
+                val tabIndex = arg.toIntOrNull()?.coerceIn(0, 1) ?: 0
+                windowManager.attachWindow(ClipboardWindow(di, tabIndex))
+            }""", """            private fun openLinkClipboard() {
+                if (com.osfans.trime.link.sensitiveEditor(service.currentInputEditorInfo)) return
+                com.osfans.trime.link.LinkActivity.openClipboard(service)
+            }""")
+
+    input_bar = java / "ime/bar/InputBarDelegate.kt"
+    apply_edit(input_bar, "            ClipboardHelper.addOnUpdateListener(onClipboardUpdateListener)",
+               "            // Copied content never appears as an automatic keyboard suggestion.")
 
     theme_manager = java / "data/theme/ThemeManager.kt"
     previous_selection = 'val selectedThemeId = "shuangpin_link"'
@@ -79,6 +100,19 @@ def apply_design(src, assets):
                    location + "com.osfans.trime.link.keyboardGlass(scope)")
 
     ime = java / "ime/core/TrimeInputMethodService.kt"
+    finish_view = "    override fun onFinishInputView(finishingInput: Boolean) {"
+    apply_edit(ime, finish_view, """    override fun onWindowShown() {
+        super.onWindowShown()
+        if (::clipboardLink.isInitialized) clipboardLink.windowShown()
+    }
+
+    override fun onWindowHidden() {
+        if (::clipboardLink.isInitialized) clipboardLink.suspendClipboard()
+        super.onWindowHidden()
+    }
+
+    override fun onFinishInputView(finishingInput: Boolean) {
+        clipboardLink.suspendClipboard()""")
     input_view = "    private var inputView: InputView? = null"
     apply_edit(ime, input_view, input_view + "\n    private var inputViewAwaitingTheme = false")
     theme_ready = "                ColorManager.addOnChangedListener(onColorChangeListener)"

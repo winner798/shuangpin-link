@@ -88,7 +88,7 @@ internal sealed partial class LinkWindow
             Card("连接服务器", connectionStatus, Copy("服务器地址"), Input(server, "服务器地址"),
                 Copy("服务器启用码"), Input(setupCode, "服务器启用码"), Actions(ActionButton("启用或恢复", Connect, primary: true))),
             Card("手机配对", Actions(ActionButton("显示配对码", Invite, primary: true), ActionButton("解除手机配对", ResetPeer)), qrBox),
-            Card("剪贴板", pause));
+            Card("剪贴板", Copy("配对后自动加密收发纯文字。带系统隐私标记的内容会被跳过。"), pause));
 
         updateStatus.ForeColor = Glass.Muted;
         StyleButton(checkUpdate, primary: true);

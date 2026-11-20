@@ -4,6 +4,7 @@ import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.content.res.Configuration
@@ -49,6 +50,10 @@ import kotlin.math.roundToInt
 class LinkActivity : ComponentActivity() {
     private lateinit var settings: LinkSettings
     private lateinit var status: TextView
+    private lateinit var clipboardStatus: TextView
+    private lateinit var clearHistory: Button
+    private lateinit var clipboardSection: LinearLayout
+    private lateinit var scroll: ScrollView
     private lateinit var keyboardStatus: TextView
     private lateinit var dictionaryStatus: TextView
     private lateinit var keyboardAction: Button
@@ -152,13 +157,15 @@ class LinkActivity : ComponentActivity() {
             addStatus(this, "打字时点「切换方案」，选择微软双拼或普通拼音。", top = 10)
         }
 
-        section(pane, "设备互通") {
+        clipboardSection = section(pane, "设备互通") {
             status = addStatus(this, "")
             scanAction = addAction(this, "扫描电脑配对码", primary = true) {
                 scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                     .setPrompt("扫描电脑上的配对二维码").setBeepEnabled(false).setOrientationLocked(false))
             }
             pause = addSwitch(this, "暂停剪贴板同步", "paused", false)
+            clipboardStatus = addStatus(this, "", top = 8)
+            clearHistory = addAction(this, "清除旧剪贴板历史") { confirmClearClipboardHistory() }
             removePairAction = addAction(this, "移除手机配对") {
                 AlertDialog.Builder(this@LinkActivity).setMessage("移除后，请同时在电脑上解除手机配对。")
                     .setNegativeButton("取消", null).setPositiveButton("移除") { _, _ ->
@@ -196,7 +203,7 @@ class LinkActivity : ComponentActivity() {
         val wrap = FrameLayout(this)
         val wideWidth = if (resources.configuration.screenWidthDp >= 640) dp(584) else MATCH_PARENT
         wrap.addView(pane, FrameLayout.LayoutParams(wideWidth, WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-        val scroll = ScrollView(this).apply {
+        scroll = ScrollView(this).apply {
             background = rounded(colors.surface, 0, highlight = colors.surfaceHighlight)
             clipToPadding = false
             isFillViewport = true
@@ -211,11 +218,23 @@ class LinkActivity : ComponentActivity() {
         setContentView(scroll)
         refresh()
         refreshKeyboard()
+        showClipboardSection(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (::scroll.isInitialized) showClipboardSection(intent)
     }
 
     override fun onResume() {
         super.onResume()
         if (::keyboardStatus.isInitialized) refreshKeyboard()
+    }
+
+    private fun showClipboardSection(intent: Intent?) {
+        if (intent?.action == ACTION_CLIPBOARD) {
+            scroll.post { scroll.scrollTo(0, clipboardSection.top) }
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -270,7 +289,7 @@ class LinkActivity : ComponentActivity() {
         return shape
     }
 
-    private fun section(pane: LinearLayout, title: String, content: LinearLayout.() -> Unit) {
+    private fun section(pane: LinearLayout, title: String, content: LinearLayout.() -> Unit): LinearLayout {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val padding = dp(16)
@@ -287,6 +306,7 @@ class LinkActivity : ComponentActivity() {
             content()
         }
         pane.addView(panel, row().apply { bottomMargin = dp(12) })
+        return panel
     }
 
     private fun addStatus(pane: LinearLayout, value: String, top: Int = 0) = TextView(this).apply {
@@ -437,6 +457,7 @@ class LinkActivity : ComponentActivity() {
                 } else {
                     settings.prefs.edit().putBoolean(key, checked).apply()
                     if (key == "share") syncAction.isEnabled = checked && settings.device() != null
+                    if (key == "paused") showClipboardStatus(checked)
                 }
             }
             pane.addView(this, row(2))
@@ -481,6 +502,34 @@ class LinkActivity : ComponentActivity() {
         pause.isEnabled = device != null
         share.isEnabled = device != null
         syncAction.isEnabled = device != null && share.isChecked
+        showClipboardStatus(pause.isChecked)
+        showLegacyClipboardHistory()
+    }
+
+    private fun showClipboardStatus(paused: Boolean) {
+        clipboardStatus.text = if (paused) {
+            "剪贴板同步已暂停。"
+        } else {
+            "打开键盘时自动同步。系统标记为敏感的内容会跳过。"
+        }
+    }
+
+    private fun showLegacyClipboardHistory() {
+        clearHistory.visibility = if (LinkClipboard.hasLegacyHistory(this)) View.VISIBLE else View.GONE
+    }
+
+    private fun confirmClearClipboardHistory() {
+        AlertDialog.Builder(this)
+            .setTitle("清除旧剪贴板历史？")
+            .setMessage("将从本机删除旧版本记录的所有剪贴板条目，包括置顶条目。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("清除") { _, _ ->
+                lifecycleScope.launch {
+                    val cleared = withContext(Dispatchers.IO) { LinkClipboard.clearLegacyHistory(this@LinkActivity) }
+                    clipboardStatus.text = if (cleared) "本机旧剪贴板历史已清除。" else "旧剪贴板历史清除失败。"
+                    showLegacyClipboardHistory()
+                }
+            }.show()
     }
 
     private fun clearLearning() {
@@ -513,6 +562,17 @@ class LinkActivity : ComponentActivity() {
                 refresh()
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { status.text = "配对未完成。请在电脑端重新生成配对码。" }
+        }
+    }
+
+    internal companion object {
+        private const val ACTION_CLIPBOARD = "com.osfans.trime.link.OPEN_CLIPBOARD"
+
+        fun openClipboard(context: Context) {
+            context.startActivity(Intent(context, LinkActivity::class.java).apply {
+                action = ACTION_CLIPBOARD
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            })
         }
     }
 }
