@@ -38,8 +38,7 @@ internal sealed class Relay
 
     internal async Task<T?> Send<T>(HttpMethod method, string path, CancellationToken cancel, object? body = null)
     {
-        using var request = new HttpRequestMessage(method, new Uri(server, "v1/" + path));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var request = CreateRequest(method, path);
         if (body is not null)
         {
             request.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(body, Json));
@@ -49,6 +48,20 @@ internal sealed class Relay
         if (response.StatusCode == HttpStatusCode.NoContent) return default;
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<T>(Json, cancel);
+    }
+
+    internal async Task<HttpResponseMessage> GetStream(string path, CancellationToken cancel)
+    {
+        using var request = CreateRequest(HttpMethod.Get, path);
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+        return await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel);
+    }
+
+    HttpRequestMessage CreateRequest(HttpMethod method, string path)
+    {
+        var request = new HttpRequestMessage(method, new Uri(server, "v1/" + path));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return request;
     }
 
     internal static string Encode(byte[] value) => Convert.ToBase64String(value);

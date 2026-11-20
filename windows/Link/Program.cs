@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -34,11 +35,15 @@ internal sealed class LinkWindow : Form
     readonly CheckBox pause = new() { AutoSize = true, Text = "暂停剪贴板同步" };
     readonly CheckBox share = new() { AutoSize = true, Text = "共享个人词库", Checked = true };
     readonly CheckBox learning = new() { AutoSize = true, Text = "学习选词习惯", Checked = true };
+    readonly Button checkUpdate = new() { Text = "检查更新", AutoSize = true };
+    readonly Button cancelUpdate = new() { Text = "取消更新", AutoSize = true, Visible = false };
+    readonly Label updateStatus = new() { AutoSize = true, MaximumSize = new Size(400, 0), Text = $"当前版本 {WindowsUpdate.Current.VersionName}" };
     readonly NotifyIcon tray = new() { Text = "双拼互联", Icon = SystemIcons.Application, Visible = true };
     readonly System.Windows.Forms.Timer qrExpiry = new() { Interval = 5 * 60 * 1000 };
     readonly bool startHidden;
     Session? session;
     CancellationTokenSource? link;
+    CancellationTokenSource? updateRequest;
     Task[] workers = [];
     bool updating;
     bool exiting;
@@ -59,21 +64,27 @@ internal sealed class LinkWindow : Form
     {
         this.startHidden = startHidden;
         Text = "双拼互联";
-        ClientSize = new Size(450, 485);
+        ClientSize = new Size(450, 545);
         MinimumSize = new Size(470, 500);
         Font = new Font("Microsoft YaHei UI", 10f);
         BackColor = SystemColors.Window;
         var content = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(18) };
         var actions = new FlowLayoutPanel { AutoSize = true };
         var dictionaryActions = new FlowLayoutPanel { AutoSize = true };
+        var updateActions = new FlowLayoutPanel { AutoSize = true };
         actions.Controls.AddRange([Button("启用或恢复", Connect), Button("显示配对码", Invite), Button("解除手机配对", ResetPeer)]);
         dictionaryActions.Controls.AddRange([Button("立即同步词库", SyncNow), Button("清空本机词库", ClearDictionary)]);
+        updateActions.Controls.AddRange([checkUpdate, cancelUpdate]);
+        checkUpdate.Click += async (_, _) => await CheckForUpdates();
+        cancelUpdate.Click += (_, _) => updateRequest?.Cancel();
         content.Controls.AddRange([new Label { Text = "双拼互联", Font = new Font(Font.FontFamily, 19f, FontStyle.Bold), AutoSize = true },
-            status, new Label { Text = "同步服务器", AutoSize = true }, server, setupCode, actions, pause, share, learning, dictionaryActions, qr]);
+            status, new Label { Text = "同步服务器", AutoSize = true }, server, setupCode, actions, pause, share, learning,
+            dictionaryActions, updateActions, updateStatus, qr]);
         Controls.Add(content);
 
         tray.ContextMenuStrip = new ContextMenuStrip();
         tray.ContextMenuStrip.Items.Add("打开设置", null, (_, _) => Reveal());
+        tray.ContextMenuStrip.Items.Add("检查更新", null, async (_, _) => { Reveal(); await CheckForUpdates(); });
         tray.ContextMenuStrip.Items.Add("暂停或恢复同步", null, (_, _) => pause.Checked = !pause.Checked);
         tray.ContextMenuStrip.Items.Add("退出", null, (_, _) => { exiting = true; Close(); });
         tray.DoubleClick += (_, _) => Reveal();
@@ -132,6 +143,7 @@ internal sealed class LinkWindow : Form
     {
         base.OnShown(e);
         if (startHidden) Hide();
+        WindowsUpdate.CleanPreviousDownloads();
         await Restart();
     }
 
@@ -154,6 +166,7 @@ internal sealed class LinkWindow : Form
         if (!exiting && e.CloseReason == CloseReason.UserClosing)
         { e.Cancel = true; Hide(); return; }
         link?.Cancel();
+        updateRequest?.Cancel();
         ClearQr();
         tray.Dispose();
         base.OnFormClosing(e);
@@ -274,6 +287,85 @@ internal sealed class LinkWindow : Form
         if (session is not { ShareDictionary: true }) { status.Text = "请先启用个人词库共享。"; return; }
         await SyncDictionary(link?.Token ?? CancellationToken.None);
         status.Text = "个人词库已检查同步。";
+    }
+
+    async Task CheckForUpdates()
+    {
+        if (updateRequest is not null) return;
+        if (session is not { } device)
+        {
+            updateStatus.Text = "请先绑定服务器，再检查更新。";
+            return;
+        }
+
+        WindowsUpdate.CleanPreviousDownloads();
+        using var request = new CancellationTokenSource();
+        updateRequest = request;
+        checkUpdate.Enabled = false;
+        cancelUpdate.Visible = true;
+        string? installer = null;
+        bool launched = false;
+        try
+        {
+            updateStatus.Text = "正在检查更新…";
+            var relay = new Relay(device.Server, device.Device.Token);
+            var release = await WindowsUpdate.Check(relay, request.Token);
+            if (release is null)
+            {
+                updateStatus.Text = $"当前版本 {WindowsUpdate.Current.VersionName} 已是最新版本。";
+                return;
+            }
+
+            string version = release.Version.VersionName;
+            updateStatus.Text = $"可更新至 {version}。";
+            if (MessageBox.Show(this, $"可更新至 {version}，安装包约 {release.Size / (1024d * 1024):0.#} MB。现在下载？",
+                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+            updateStatus.Text = $"正在下载并校验 {version}…";
+            installer = await WindowsUpdate.Download(relay, release, request.Token);
+            request.Token.ThrowIfCancellationRequested();
+            updateStatus.Text = "安装包校验通过。";
+            if (MessageBox.Show(this, $"现在安装 {version}？安装时双拼互联会暂时退出。",
+                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            {
+                updateStatus.Text = "已取消安装。";
+                return;
+            }
+
+            var start = new ProcessStartInfo(installer) { UseShellExecute = true };
+            start.ArgumentList.Add("--wait-for");
+            start.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("无法启动更新安装程序。");
+            launched = true;
+        }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
+        { updateStatus.Text = "服务器绑定已失效，请重新绑定后检查更新。"; }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)
+        { updateStatus.Text = "服务器暂时没有可用的更新包。"; }
+        catch (HttpRequestException)
+        { updateStatus.Text = "无法连接更新服务，请检查网络后重试。"; }
+        catch (Exception error) when (error is InvalidDataException or JsonException or CryptographicException or FormatException)
+        { updateStatus.Text = "更新信息或安装包校验失败。"; }
+        catch (OperationCanceledException)
+        { updateStatus.Text = request.IsCancellationRequested ? "已取消更新。" : "更新请求超时，请重试。"; }
+        catch (Exception error) when (error is IOException or InvalidOperationException or UnauthorizedAccessException or ArgumentException or System.ComponentModel.Win32Exception)
+        { updateStatus.Text = "无法下载或打开更新安装包，请重试。"; }
+        finally
+        {
+            if (!launched && installer is not null) WindowsUpdate.RemoveDownload(installer);
+            updateRequest = null;
+            if (!IsDisposed)
+            {
+                checkUpdate.Enabled = true;
+                cancelUpdate.Visible = false;
+            }
+        }
+
+        if (launched)
+        {
+            exiting = true;
+            Close();
+        }
     }
 
     async Task ClearDictionary()

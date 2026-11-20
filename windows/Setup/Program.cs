@@ -14,6 +14,8 @@ static class Setup
         ApplicationConfiguration.Initialize();
         string stage = Path.Combine(Path.GetTempPath(), "ShuangpinLink-" + Guid.NewGuid().ToString("N"));
         bool verify = args.Contains("--check");
+        bool resumeFromUpdate = false;
+        bool complete = false;
         try
         {
             using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("install.zip")
@@ -31,10 +33,12 @@ static class Setup
                 }
                 return 0;
             }
+            resumeFromUpdate = WaitForPreviousInstance(args);
             if (MessageBox.Show("将安装微软双拼输入法和托盘同步程序。若已安装小狼毫，会先备份将被替换的配置和词库文件。继续吗？", Title,
                     MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return 0;
             zip.ExtractToDirectory(stage);
             Install(stage);
+            complete = true;
             MessageBox.Show("安装完成。按 Win + 空格选择小狼毫，点击托盘中的双拼互联打开配对设置。", Title,
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
@@ -46,6 +50,11 @@ static class Setup
         }
         finally
         {
+            if (resumeFromUpdate && !complete)
+            {
+                try { StartInstalledApplication(); }
+                catch (System.ComponentModel.Win32Exception) { }
+            }
             if (Directory.Exists(stage))
             {
                 try { Directory.Delete(stage, recursive: true); }
@@ -55,9 +64,37 @@ static class Setup
         }
     }
 
+    static bool WaitForPreviousInstance(string[] args)
+    {
+        int flag = Array.IndexOf(args, "--wait-for");
+        if (flag < 0) return false;
+        if (flag + 1 >= args.Length || !int.TryParse(args[flag + 1], out int processId)
+            || processId <= 0 || processId == Environment.ProcessId)
+            throw new ArgumentException("无法取得原程序的进程信息。");
+
+        Process previous;
+        try { previous = Process.GetProcessById(processId); }
+        catch (ArgumentException) { return true; }
+        using (previous)
+        {
+            if (!previous.WaitForExit(30000))
+                throw new InvalidOperationException("双拼互联仍在运行。请从托盘退出后重新安装。");
+        }
+        return true;
+    }
+
     static string? WeaselLocation() =>
         Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Rime\Weasel", "InstallDir", null) as string
         ?? Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Rime\Weasel", "InstallDir", null) as string;
+
+    static string LocalRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ShuangpinLink");
+    static string InstalledExecutable => Path.Combine(LocalRoot, "app", "ShuangpinLink.exe");
+
+    static void StartInstalledApplication()
+    {
+        if (File.Exists(InstalledExecutable))
+            Process.Start(new ProcessStartInfo(InstalledExecutable) { UseShellExecute = true })?.Dispose();
+    }
 
     static void Install(string stage)
     {
@@ -71,16 +108,15 @@ static class Setup
         var weasel = WeaselLocation() ?? throw new InvalidOperationException("小狼毫安装未完成。");
         var rimeUser = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Rime\Weasel", "RimeUserDir", null) as string
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Rime");
-        var localRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ShuangpinLink");
-        var app = Path.Combine(localRoot, "app");
-        Directory.CreateDirectory(app);
-        var executable = Path.Combine(app, "ShuangpinLink.exe");
-        File.Copy(Path.Combine(stage, "ShuangpinLink.exe"), executable, overwrite: true);
-        var backup = Path.Combine(localRoot, "configuration-backup", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff"));
+        var executable = InstalledExecutable;
+        Directory.CreateDirectory(Path.GetDirectoryName(executable)!);
+        var stagedExecutable = executable + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var backup = Path.Combine(LocalRoot, "configuration-backup", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff"));
         var source = Path.Combine(stage, "rime");
         var updated = new List<(string Destination, string? Backup)>();
         try
         {
+            File.Copy(Path.Combine(stage, "ShuangpinLink.exe"), stagedExecutable);
             foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
             {
                 var relative = Path.GetRelativePath(source, file);
@@ -97,6 +133,7 @@ static class Setup
                 File.Copy(file, destination, overwrite: true);
             }
             Deploy(weasel);
+            File.Move(stagedExecutable, executable, overwrite: true);
         }
         catch
         {
@@ -107,12 +144,18 @@ static class Setup
             }
             throw;
         }
+        finally
+        {
+            try { File.Delete(stagedExecutable); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
 
         using var autostart = Registry.CurrentUser.CreateSubKey(RunKey);
         autostart.SetValue("ShuangpinLink", $"\"{executable}\" --tray");
         var programs = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
         File.WriteAllText(Path.Combine(programs, "双拼互联.url"), "[InternetShortcut]\r\nURL=" + new Uri(executable).AbsoluteUri + "\r\n");
-        Process.Start(new ProcessStartInfo(executable) { UseShellExecute = true });
+        StartInstalledApplication();
     }
 
     static void Deploy(string root)

@@ -52,14 +52,24 @@ internal class LinkHttp(server: String, private val token: String) {
         require(it.scheme == "https" && it.host != null && it.userInfo == null && it.query == null && it.fragment == null)
     }
 
-    suspend fun call(method: String, route: String, body: JSONObject? = null): JSONObject? = withContext(Dispatchers.IO) {
+    fun connection(method: String, route: String): HttpsURLConnection {
         val conn = base.resolve("v1/$route").toURL().openConnection() as HttpsURLConnection
+        conn.requestMethod = method
+        conn.connectTimeout = 7000
+        conn.readTimeout = 26000
+        conn.instanceFollowRedirects = false
+        conn.setRequestProperty("Authorization", "Bearer $token")
+        return conn
+    }
+
+    suspend fun call(
+        method: String,
+        route: String,
+        body: JSONObject? = null,
+        responseLimit: Int = (DICT_LIMIT + 128) * 4 / 3 + 256,
+    ): JSONObject? = withContext(Dispatchers.IO) {
+        val conn = connection(method, route)
         try {
-            conn.requestMethod = method
-            conn.connectTimeout = 7000
-            conn.readTimeout = 26000
-            conn.instanceFollowRedirects = false
-            conn.setRequestProperty("Authorization", "Bearer $token")
             if (body != null) {
                 val bytes = body.toString().toByteArray()
                 conn.setRequestProperty("Content-Type", "application/json")
@@ -70,13 +80,12 @@ internal class LinkHttp(server: String, private val token: String) {
             when (val code = conn.responseCode) {
                 204 -> null
                 200, 201 -> conn.inputStream.use { input ->
-                    val limit = (DICT_LIMIT + 128) * 4 / 3 + 256
                     val output = java.io.ByteArrayOutputStream()
                     val buffer = ByteArray(8192)
                     while (true) {
                         val size = input.read(buffer)
                         if (size < 0) break
-                        if (output.size() + size > limit) throw IOException("Response too large")
+                        if (output.size() + size > responseLimit) throw IOException("Response too large")
                         output.write(buffer, 0, size)
                     }
                     JSONObject(output.toString("UTF-8"))

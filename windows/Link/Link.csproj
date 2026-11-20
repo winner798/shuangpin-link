@@ -9,6 +9,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="QRCoder" Version="1.6.0" />
+    <EmbeddedResource Include="../../updates/version.json" LogicalName="ShuangpinLink.UpdateVersion.json" />
+    <EmbeddedResource Include="../../updates/public-key.spki.b64" LogicalName="ShuangpinLink.UpdatePublicKey.txt" />
   </ItemGroup>
 </Project>
 

@@ -3,9 +3,10 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 Set-Location (Split-Path -Parent $PSScriptRoot)
 if ($Dotnet -ne 'dotnet') { $Dotnet = (Resolve-Path $Dotnet).Path }
+$version = (Get-Content -LiteralPath updates/version.json -Raw | ConvertFrom-Json).versionName
 python -B scripts/prepare.py windows
 New-Item -ItemType Directory -Force dist,.build/windows-client | Out-Null
-& $Dotnet publish windows/Link/Link.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o .build/windows-client --nologo
+& $Dotnet publish windows/Link/Link.csproj -c Release -r win-x64 --self-contained true "-p:Version=$version" -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o .build/windows-client --nologo
 @'
 from zipfile import ZipFile, ZIP_DEFLATED
 from pathlib import Path
@@ -17,7 +18,7 @@ with ZipFile(base / 'setup-payload.zip', 'w', ZIP_DEFLATED, compresslevel=6) as 
         if file.is_file():
             output.write(file, 'rime/' + file.relative_to(base / 'windows-data').as_posix())
 '@ | python -B -
-& $Dotnet publish windows/Setup/Setup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o dist/windows --nologo
+& $Dotnet publish windows/Setup/Setup.csproj -c Release -r win-x64 --self-contained true "-p:Version=$version" -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o dist/windows --nologo
 $package = (Resolve-Path dist/windows/ShuangpinLinkSetup.exe).Path
 $check = Start-Process -FilePath $package -ArgumentList '--check' -PassThru -Wait -WindowStyle Hidden
 if ($check.ExitCode -ne 0) { throw 'Windows installation bundle check failed.' }

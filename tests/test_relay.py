@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import http.client
 import json
 import tempfile
@@ -15,13 +16,14 @@ class RelayTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.setup_code = credential()
-        self.relay = Relay(("127.0.0.1", 0), Store(Path(temp.name) / 'state.sqlite', digest(self.setup_code)))
+        self.updates = Path(temp.name) / 'updates'
+        self.relay = Relay(("127.0.0.1", 0), Store(Path(temp.name) / 'state.sqlite', digest(self.setup_code)), self.updates)
         thread = threading.Thread(target=self.relay.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(self.relay.server_close)
         self.addCleanup(self.relay.shutdown)
 
-    def call(self, method, path, token=None, body=None):
+    def call(self, method, path, token=None, body=None, raw_response=False):
         conn = http.client.HTTPConnection('127.0.0.1', self.relay.server_port, timeout=5)
         try:
             headers = {'Authorization': f'Bearer {token}'} if token else {}
@@ -29,6 +31,8 @@ class RelayTests(unittest.TestCase):
             conn.request(method, path, body=payload, headers=headers)
             response = conn.getresponse()
             raw = response.read()
+            if raw_response:
+                return response.status, raw
             return response.status, json.loads(raw) if raw else None
         finally:
             conn.close()
@@ -81,6 +85,44 @@ class RelayTests(unittest.TestCase):
         self.assertEqual(self.call('GET', '/v1/clip', peer), (204, None))
         self.assertEqual(self.call('POST', '/v1/recover', self.setup_code)[0], 201)
         self.assertEqual(self.call('GET', '/v1/dictionary', owner)[0], 401)
+
+    def test_only_paired_devices_can_fetch_current_release(self):
+        owner, peer = self.pair()
+        update_url = '/v1/update'
+        artifact_url = '/v1/update/files/20261102/windows-x64'
+        self.assertEqual(self.call('GET', update_url, owner)[0], 404)
+        self.assertEqual(self.call('GET', artifact_url, peer)[0], 404)
+
+        directory = self.updates / '20261102'
+        directory.mkdir(parents=True)
+        artifact = bytes(range(256)) * 2049
+        installer = directory / 'windows-x64.exe'
+        installer.write_bytes(artifact)
+        (directory / 'android-arm64-v8a.apk').write_bytes(b'not in the release manifest')
+        inactive_version = self.updates / '20261101'
+        inactive_version.mkdir()
+        (inactive_version / 'windows-x64.exe').write_bytes(b'older release')
+        manifest = {
+            'versionCode': 20261102,
+            'versionName': '0.2.0',
+            'files': {'windows-x64': {'size': len(artifact), 'sha256': hashlib.sha256(artifact).hexdigest()}},
+        }
+        envelope = {'manifest': base64.b64encode(json.dumps(manifest).encode()).decode(),
+                    'signature': base64.b64encode(b'signature-verified-by-client').decode()}
+        raw_manifest = (json.dumps(envelope, indent=2) + '\n').encode()
+        (self.updates / 'manifest.json').write_bytes(raw_manifest)
+
+        self.assertEqual(self.call('GET', update_url)[0], 401)
+        self.assertEqual(self.call('GET', artifact_url, credential())[0], 401)
+        self.assertEqual(self.call('GET', update_url, owner, raw_response=True), (200, raw_manifest))
+        self.assertEqual(self.call('GET', artifact_url, peer, raw_response=True), (200, artifact))
+        self.assertEqual(self.call('GET', '/v1/update/files/20261102/android-arm64-v8a', peer)[0], 404)
+        self.assertEqual(self.call('GET', '/v1/update/files/20261101/windows-x64', peer)[0], 404)
+        self.assertEqual(self.call('GET', '/v1/update/files/20261102/%2e%2e%2fmanifest.json', peer)[0], 404)
+        installer.write_bytes(b'incomplete')
+        self.assertEqual(self.call('GET', artifact_url, peer)[0], 503)
+        self.assertEqual(self.call('POST', '/v1/reset-peer', owner)[0], 204)
+        self.assertEqual(self.call('GET', artifact_url, peer)[0], 401)
 
 
 if __name__ == '__main__':

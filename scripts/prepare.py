@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -148,11 +149,28 @@ def prepare_android():
         extract_apk(apk, app / "prebuilt", assets, arch)
     copy_rime(assets)
     shutil.copytree(ROOT / "android/overlay", java / "link", dirs_exist_ok=True)
+    shutil.copyfile(ROOT / "android/res/xml/link_update_paths.xml", app / "src/main/res/xml/link_update_paths.xml")
+    release = ROOT / "updates"
+    update_assets = assets.parent / "ime-update"
+    update_assets.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(release / "public-key.spki.b64", update_assets / "public-key.spki.b64")
+    shutil.copyfile(release / "version.json", update_assets / "version.json")
+    version = json.loads((release / "version.json").read_text(encoding="utf-8"))
+    version_code, version_name = version["versionCode"], version["versionName"]
+    if type(version_code) is not int or not 1 <= version_code <= 2_100_000_000:
+        raise ValueError("Invalid Android update version code")
+    if not isinstance(version_name, str) or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.+-]{0,63}", version_name):
+        raise ValueError("Invalid Android update version name")
     gradle = app / "build.gradle.kts"
     old_plugin = '    id("com.osfans.trime.opencc-data")\n'
     text = gradle.read_text(encoding="utf-8")
-    if old_plugin in text:
-        gradle.write_text(text.replace(old_plugin, "", 1), encoding="utf-8")
+    text = text.replace(old_plugin, "", 1)
+    for field, before, after in (("versionCode", r"[0-9]+", str(version_code)),
+                                 ("versionName", r'"[^"\r\n]*"', f'"{version_name}"')):
+        text, count = re.subn(rf"(?m)^        {field} = {before}$", f"        {field} = {after}", text)
+        if count != 1:
+            raise RuntimeError(f"Upstream layout changed: {gradle.name}, {field}")
+    gradle.write_text(text, encoding="utf-8")
     change(gradle, [
         ('applicationId = "com.osfans.trime"', 'applicationId = "io.github.winner798.shuangpinlink"'),
         ("minSdk = 21", "minSdk = 29"),
@@ -163,8 +181,22 @@ def prepare_android():
     change(app / "src/main/AndroidManifest.xml", [
         ('    <uses-permission android:name="android.permission.VIBRATE" />',
          '    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.VIBRATE" />'),
+        ('    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+         '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n'
+         '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />'),
         ('android:allowBackup="true"', 'android:allowBackup="false"\n        android:usesCleartextTraffic="false"'),
         ('        <!-- Settings activity -->', '        <activity android:name=".link.LinkActivity" android:exported="false" />\n\n        <!-- Settings activity -->'),
+        ('        <activity android:name=".link.LinkActivity" android:exported="false" />',
+         '        <provider\n'
+         '            android:name=".link.LinkUpdateFileProvider"\n'
+         '            android:authorities="${applicationId}.link-updates"\n'
+         '            android:exported="false"\n'
+         '            android:grantUriPermissions="true">\n'
+         '            <meta-data\n'
+         '                android:name="android.support.FILE_PROVIDER_PATHS"\n'
+         '                android:resource="@xml/link_update_paths" />\n'
+         '        </provider>\n\n'
+         '        <activity android:name=".link.LinkActivity" android:exported="false" />'),
     ])
     change(java / "core/data/UserDataManager.kt", [
         ("          - schema: luna_pinyin_simp", "          - schema: double_pinyin_mspy"),
