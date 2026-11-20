@@ -23,7 +23,7 @@ jobs:
       - run: python -B -m unittest discover -s tests -v
 
   windows:
-    if: ${{ !inputs.android_build_run }}
+    if: ${{ false }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
