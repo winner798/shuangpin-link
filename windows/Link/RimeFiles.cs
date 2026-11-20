@@ -8,6 +8,32 @@ internal static class RimeFiles
     static string UserDirectory => InputPaths.UserDirectory;
     internal static string RestoreDirectory => Path.Combine(UserDirectory, "sync", "shuangpin-link-peer");
     internal static bool LearningEnabled => LearningSettings.Enabled(UserDirectory);
+    static string FuzzyPath => Path.Combine(UserDirectory, "link_profile.custom.yaml");
+    internal static bool FuzzyEnabled => File.Exists(FuzzyPath);
+
+    internal static async Task SetFuzzy(bool enabled, CancellationToken token)
+    {
+        string path = FuzzyPath;
+        const string patch = """
+            patch:
+              double_pinyin_mspy:
+                __include: link_spellings:/double_pinyin_mspy_fuzzy
+              rime_ice:
+                __include: link_spellings:/rime_ice_fuzzy
+            """;
+        Directory.CreateDirectory(UserDirectory);
+        byte[]? before = File.Exists(path) ? await File.ReadAllBytesAsync(path, token) : null;
+        if (enabled) await WriteAtomic(path, Encoding.UTF8.GetBytes(patch + "\n"), token);
+        else File.Delete(path);
+        try { await RunDeployer("/deploy", token); }
+        catch
+        {
+            if (before is null) File.Delete(path);
+            else await WriteAtomic(path, before, CancellationToken.None);
+            await RunDeployer("/deploy", CancellationToken.None);
+            throw;
+        }
+    }
     internal static async Task RunDeployer(string option, CancellationToken token)
     {
         using var process = InputPaths.StartTool(InputPaths.RequireEngine(), InputPaths.Deployer, option);

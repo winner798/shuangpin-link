@@ -1,0 +1,5 @@
+double_pinyin_mspy:
+  __include: link_spellings:/double_pinyin_mspy_exact
+rime_ice:
+  __include: link_spellings:/rime_ice_exact
+__patch: link_profile.custom:/patch?

@@ -99,6 +99,40 @@ def apply_design(src, assets):
         apply_edit(keyboard_view, location + 'scope.drawable("keyboard_background")',
                    location + "com.osfans.trime.link.keyboardGlass(scope)")
 
+    keyboard = java / "ime/keyboard/Keyboard.kt"
+    apply_edit(keyboard, "    /** 按鍵默認水平間距  */",
+               '''    // The portrait reference has 1248 px of usable width and four 200 px rows.
+    private val referenceGeometry = theme.name == "双拼互联" && !context.isLandscapeMode()
+    private fun referencePx(value: Int) = kotlin.math.round(allowedWidth * value / 1248f).toInt()
+
+    /** 按鍵默認水平間距  */''')
+    for dimension, measured in (("horizontalGap", 18), ("verticalGap", 34)):
+        anchor = f"    internal val {dimension}: Int =\n        resolvePositive"
+        apply_edit(keyboard, anchor, f"    internal val {dimension}: Int =\n"
+                   f"        if (referenceGeometry) referencePx({measured})\n        else resolvePositive")
+    apply_edit(keyboard, "    val keyboardHeight: Int =\n        resolvePositive(",
+               "    val keyboardHeight: Int =\n        if (referenceGeometry) referencePx(800)\n        else resolvePositive(")
+
+    key_listener = java / "ime/keyboard/CommonKeyboardActionListener.kt"
+    action = "            override fun onAction(action: KeyAction) {"
+    apply_edit(key_listener, action, action + '''
+                if (action.code == KeyEvent.KEYCODE_SPACE && action.modifier == 0 &&
+                    KeyboardWindow.currentKeyboard.modifier == 0 &&
+                    rime.run { statusCached }.let { it.isAsciiMode && !it.isComposing } &&
+                    com.osfans.trime.link.LinkInputOptions.correctEnglish(service)
+                ) return
+''')
+
+    key_view = java / "ime/keyboard/KeyView.kt"
+    draw_label = "            drawLabel(canvas, label)"
+    apply_edit(key_view, draw_label, '''            val centerX = (width - paddingLeft - paddingRight) / 2f + paddingLeft
+            val centerY = (height - paddingTop - paddingBottom) / 2f + paddingTop
+            if (theme.name != "双拼互联" ||
+                !com.osfans.trime.link.drawLinkKeyIcon(canvas, label, centerX, centerY, dp(24).toFloat(), key.getTextColor())
+            ) {
+                drawLabel(canvas, label)
+            }''')
+
     ime = java / "ime/core/TrimeInputMethodService.kt"
     finish_view = "    override fun onFinishInputView(finishingInput: Boolean) {"
     apply_edit(ime, finish_view, """    override fun onWindowShown() {

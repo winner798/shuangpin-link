@@ -89,6 +89,9 @@ if (-not $engine) {
     $engine = Find-InputEngine
 }
 if (-not $engine) { throw 'The expected x64 input engine was not found.' }
+$conversionFiles = 't2s.json','TSCharacters.ocd2','TSPhrases.ocd2'
+$opencc = Join-Path $build 'windows-native-opencc'
+& $sevenZip x -y "-o$opencc" '-ir!t2s.json' '-ir!TSCharacters.ocd2' '-ir!TSPhrases.ocd2' $installer | Out-Host
 $definition = Join-Path $source 'rime.def'
 @('LIBRARY rime.dll','EXPORTS','    rime_get_api') | Set-Content -LiteralPath $definition -Encoding ascii
 & $libraryTool /NOLOGO /MACHINE:X64 "/DEF:$definition" "/OUT:$source/lib64/rime.lib"
@@ -129,4 +132,10 @@ Confirm-ImageArchitecture $files['ShuangpinIme32.dll'] 0x14c
 New-Item -ItemType Directory -Force "$destination/data" | Out-Null
 foreach ($name in $files.Keys) {
     Copy-Item -LiteralPath $files[$name] -Destination (Join-Path $destination $name) -Force
+}
+New-Item -ItemType Directory -Force "$destination/data/opencc" | Out-Null
+foreach ($name in $conversionFiles) {
+    $conversion = Get-ChildItem -LiteralPath $opencc -Recurse -File -Filter $name | Select-Object -First 1
+    if (-not $conversion) { throw "Missing OpenCC conversion data $name." }
+    Copy-Item -LiteralPath $conversion.FullName -Destination "$destination/data/opencc/$name" -Force
 }

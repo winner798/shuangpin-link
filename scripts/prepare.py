@@ -95,17 +95,42 @@ def copy_rime(destination, windows=False):
     text, count = re.subn(r"(?ms)^schema_list:\n.*?(?=^[a-z]\w*:)", scheme_list + "\n", text, count=1)
     if count != 1:
         raise RuntimeError("Rime Ice schema list moved")
+    text = re.sub(r"(?m)^    - traditionalization[ \t]*(?:#.*)?\n", "", text)
+    text = re.sub(r"(?m)^(  page_size: )5\b", r"\g<1>7", text, count=1)
     default_yaml.write_text(text, encoding="utf-8")
+    spelling_sets = []
     for schema_id in INPUT_SCHEMES:
         schema = destination / f"{schema_id}.schema.yaml"
         text = schema.read_text(encoding="utf-8")
         if schema_id == "rime_ice":
             text = text.replace("  name: 雾凇拼音\n", "  name: 普通拼音\n", 1)
-        text = text.replace("switches:\n", "switches:\n  - name: prediction\n    states: [联想关, 联想开]\n    reset: 1\n", 1)
+        text = re.sub(r"(?m)^  - name: traditionalization[^\n]*\n    states:[^\n]*\n", "", text)
+        text = text.replace("switches:\n", "switches:\n  - name: simplification\n    reset: 1\n"
+                            "  - name: prediction\n    states: [联想关, 联想开]\n    reset: 1\n", 1)
         text = text.replace("  processors:\n", "  processors:\n    - predictor\n", 1)
         text = text.replace("  translators:\n", "  translators:\n    - predict_translator\n", 1)
-        text += "\n\npredictor:\n  db: predict.db\n  max_candidates: 5\n  max_iterations: 1\n"
+        text = re.sub(r"(?m)^    - simplifier@traditionalize[^\n]*\n", "", text)
+        text = re.sub(r"(?m)^    - uniquifier",
+                      "    - simplifier@link_simplified\n    - lua_filter@*link_words\n    - uniquifier", text, count=1)
+        algebra = re.search(r"(?m)^  algebra:\n(?P<rules>(?:[ \t]+[^\n]*\n|#[^\n]*\n|\n)*)", text)
+        if not algebra:
+            raise RuntimeError(f"Missing spelling rules in {schema_id}")
+        exact = [line.strip().removeprefix("- ") for line in algebra["rules"].splitlines()
+                 if line.lstrip().startswith("- ")]
+        # Preserve order and native Rime penalties. The new alternatives are evaluated on full syllables.
+        fuzzy = ["fuzz/eng$/en/", "fuzz/en$/eng/", "fuzz/ing$/in/", "fuzz/in$/ing/"]
+        for name, rules in (("exact", exact), ("fuzzy", fuzzy + exact)):
+            values = [rule.split(" #", 1)[0].strip() for rule in rules]
+            spelling_sets.append(f"{schema_id}_{name}:\n" + "".join(f"  - {json.dumps(rule, ensure_ascii=False)}\n" for rule in values))
+        text = text[:algebra.start()] + f"  algebra:\n    __include: link_profile:/{schema_id}\n\n" + text[algebra.end():]
+        text += ("\n\npredictor:\n  db: predict.db\n  max_candidates: 12\n  max_iterations: 2\n"
+                 "\nlink_simplified:\n  option_name: simplification\n  opencc_config: t2s.json\n  tips: none\n")
         schema.write_text(text, encoding="utf-8")
+    (destination / "link_spellings.yaml").write_text("\n".join(spelling_sets), encoding="utf-8")
+    shutil.copyfile(ROOT / "rime/link_profile.yaml", destination / "link_profile.yaml")
+    shutil.copyfile(ROOT / "rime/link_words.lua", destination / "lua/link_words.lua")
+    if not windows:
+        shutil.copyfile(ROOT / "rime/english_corrections.tsv", destination / "english_corrections.tsv")
     shutil.copyfile(download("predict.db", "https://github.com/rime/librime-predict/releases/download/data-1.0/predict.db"),
                     destination / "predict.db")
     if windows:

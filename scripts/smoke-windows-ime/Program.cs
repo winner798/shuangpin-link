@@ -90,6 +90,7 @@ internal static class Program
                     await Task.Delay(550);
 
                     await AssertCommit(window, editor, args[0], "nihao", "full-pinyin");
+                    await AssertEnglishCorrection(window, editor, args[0]);
                     AssertClipboardPrivacy(window.Handle);
                     status = 0;
                 }
@@ -227,6 +228,35 @@ internal static class Program
         SaveScreen(window, output, name + "-committed");
         Console.WriteLine($"{name}: {keys} + Space committed {editor.Text} in an independent editor.");
         editor.Clear();
+    }
+
+    private static async Task AssertEnglishCorrection(Form window, RichTextBox editor, string output)
+    {
+        using var options = Registry.CurrentUser.CreateSubKey(@"Software\ShuangpinLink\IME");
+        object? previous = options.GetValue("EnglishAutocorrect");
+        try
+        {
+            options.SetValue("EnglishAutocorrect", 1);
+            SendChord(Keys.LShiftKey);
+            await Task.Delay(300);
+            foreach (var key in new[] { Keys.T, Keys.E, Keys.H })
+            {
+                SendChord(key);
+                await Task.Delay(70);
+            }
+            await WaitFor(() => editor.Text == "teh", "The editor did not receive the English literal before Space.");
+            SendChord(Keys.Space);
+            await WaitFor(() => editor.Text == "the ", "The native English corrector did not replace teh on Space.");
+            SaveScreen(window, output, "english-corrected");
+            Console.WriteLine("English mode: teh + Space committed the corrected word in an independent editor.");
+        }
+        finally
+        {
+            if (previous is null) options.DeleteValue("EnglishAutocorrect", throwOnMissingValue: false);
+            else options.SetValue("EnglishAutocorrect", previous);
+            SendChord(Keys.LShiftKey);
+            editor.Clear();
+        }
     }
 
     private static bool LoadedModule(string path)

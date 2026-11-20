@@ -52,6 +52,9 @@ internal sealed partial class LinkWindow : Form
     readonly CheckBox pause = new GlassCheckBox { AutoSize = true, Text = "暂停剪贴板同步" };
     readonly CheckBox share = new GlassCheckBox { AutoSize = true, Text = "共享个人词库", Checked = true };
     readonly CheckBox learning = new GlassCheckBox { AutoSize = true, Text = "学习选词习惯", Checked = true };
+    readonly CheckBox fuzzy = new GlassCheckBox { AutoSize = true, Text = "模糊拼音（en/eng、in/ing）" };
+    readonly CheckBox englishCorrection = new GlassCheckBox { AutoSize = true, Text = "英文自动纠错" };
+    const string ImePreferences = @"HKEY_CURRENT_USER\Software\ShuangpinLink\IME";
     readonly GlassButton checkUpdate = new() { Text = "检查更新" };
     readonly GlassButton cancelUpdate = new() { Text = "取消更新", Visible = false };
     readonly Label updateStatus = new() { AutoSize = true, Text = $"当前版本 {WindowsUpdate.Current.VersionName}" };
@@ -66,6 +69,8 @@ internal sealed partial class LinkWindow : Form
     bool exiting;
     bool busy;
     bool learningEnabled = true;
+    bool fuzzyEnabled;
+    bool correctionEnabled;
     readonly SemaphoreSlim dictionaryGate = new(1, 1);
 
     internal LinkWindow(bool startHidden)
@@ -74,7 +79,12 @@ internal sealed partial class LinkWindow : Form
         try { session = LoadSession(); }
         catch (Exception error) when (error is IOException or CryptographicException or JsonException)
         { status.Text = "设备设置无法读取，请用服务器启用码恢复。"; }
-        try { learningEnabled = RimeFiles.LearningEnabled; }
+        try
+        {
+            learningEnabled = RimeFiles.LearningEnabled;
+            fuzzyEnabled = RimeFiles.FuzzyEnabled;
+            correctionEnabled = Microsoft.Win32.Registry.GetValue(ImePreferences, "EnglishAutocorrect", 0) is 1;
+        }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { status.Text = "无法读取词库的学习设置。"; }
         if (session is { } device) server.Text = device.Server;
@@ -128,6 +138,36 @@ internal sealed partial class LinkWindow : Form
                     status.Text = enabled ? "两种输入方案的选词学习已启用。" : "两种输入方案的选词学习已暂停。";
                 }
                 finally { dictionaryGate.Release(); }
+            });
+        };
+        fuzzy.CheckedChanged += async (_, _) =>
+        {
+            if (updating) return;
+            if (busy) { UpdateControls(); return; }
+            bool enabled = fuzzy.Checked;
+            await RunAction(async () =>
+            {
+                status.Text = "正在更新模糊拼音设置…";
+                await dictionaryGate.WaitAsync();
+                try
+                {
+                    await RimeFiles.SetFuzzy(enabled, CancellationToken.None);
+                    fuzzyEnabled = enabled;
+                    status.Text = enabled ? "两种方案均已开启模糊拼音。" : "两种方案均已关闭模糊拼音。";
+                }
+                finally { dictionaryGate.Release(); }
+            });
+        };
+        englishCorrection.CheckedChanged += async (_, _) =>
+        {
+            if (updating) return;
+            if (busy) { UpdateControls(); return; }
+            await RunAction(() =>
+            {
+                bool enabled = englishCorrection.Checked;
+                Microsoft.Win32.Registry.SetValue(ImePreferences, "EnglishAutocorrect", enabled ? 1 : 0);
+                correctionEnabled = enabled;
+                return Task.CompletedTask;
             });
         };
     }
@@ -427,6 +467,8 @@ internal sealed partial class LinkWindow : Form
         else if (session.Paused) connectionStatus.Text = "剪贴板互通已暂停";
         else if (!clipboardPeerReady) connectionStatus.Text = "已绑定服务器，正在确认配对";
         learning.Checked = learningEnabled;
+        fuzzy.Checked = fuzzyEnabled;
+        englishCorrection.Checked = correctionEnabled;
         pause.Enabled = share.Enabled = session is not null;
         if (session is not null && server.Text.Length == 0) server.Text = session.Server;
         updating = false;

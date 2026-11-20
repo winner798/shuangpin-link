@@ -63,6 +63,7 @@ class LinkActivity : ComponentActivity() {
     private lateinit var pause: SwitchCompat
     private lateinit var share: SwitchCompat
     private lateinit var learning: SwitchCompat
+    private lateinit var fuzzy: SwitchCompat
     private lateinit var updates: LinkUpdates
     private lateinit var updateStatus: TextView
     private lateinit var checkUpdate: Button
@@ -81,8 +82,8 @@ class LinkActivity : ComponentActivity() {
         val outline: Int,
         val disabled: Int,
     ) {
-        val accent = 0xFFB8A4FF.toInt()
-        val onAccent = 0xFF201B32.toInt()
+        val accent = 0xFF82CFFF.toInt()
+        val onAccent = 0xFF163048.toInt()
     }
 
     private val dark get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -90,27 +91,27 @@ class LinkActivity : ComponentActivity() {
     private val colors by lazy {
         if (dark) {
             Palette(
-                surface = 0xFF11121E.toInt(),
-                surfaceHighlight = 0xFF262136.toInt(),
+                surface = 0xFF0C1826.toInt(),
+                surfaceHighlight = 0xFF1B3954.toInt(),
                 panel = 0xE6232033.toInt(),
                 panelHighlight = 0xED322B49.toInt(),
-                text = 0xFFF6F1FF.toInt(),
-                muted = 0xFFB8B2CB.toInt(),
-                accentText = 0xFFD8CCFF.toInt(),
-                outline = 0xFF49405F.toInt(),
-                disabled = 0xFF9287A7.toInt(),
+                text = 0xFFEAF7FF.toInt(),
+                muted = 0xFFAAC6DA.toInt(),
+                accentText = 0xFFA9DFFF.toInt(),
+                outline = 0xFF345877.toInt(),
+                disabled = 0xFF7794AA.toInt(),
             )
         } else {
             Palette(
-                surface = 0xFFF4F1FB.toInt(),
-                surfaceHighlight = 0xFFFFFCFF.toInt(),
+                surface = 0xFFEDF7FF.toInt(),
+                surfaceHighlight = 0xFFFCFEFF.toInt(),
                 panel = 0xD9F8F4FF.toInt(),
                 panelHighlight = 0xF2FFFFFF.toInt(),
-                text = 0xFF201B32.toInt(),
-                muted = 0xFF645C77.toInt(),
-                accentText = 0xFF58418F.toInt(),
-                outline = 0xFFDFD6EE.toInt(),
-                disabled = 0xFF796F8B.toInt(),
+                text = 0xFF163048.toInt(),
+                muted = 0xFF4B6479.toInt(),
+                accentText = 0xFF155A8A.toInt(),
+                outline = 0xFFCDE3F1.toInt(),
+                disabled = 0xFF57748C.toInt(),
             )
         }
     }
@@ -177,6 +178,9 @@ class LinkActivity : ComponentActivity() {
 
         section(pane, "个人词库") {
             learning = addSwitch(this, "学习选词习惯", "learning", true)
+            fuzzy = addSwitch(this, "模糊拼音（en/eng、in/ing）", "fuzzy", false)
+            addSwitch(this, "英文自动纠错", "englishAutocorrect", false)
+            addStatus(this, "英文模式下，按空格时修正常见拼写错误。")
             share = addSwitch(this, "跨设备共享词库", "share", true)
             syncAction = addAction(this, "立即同步词库") {
                 settings.prefs.edit().putLong("syncNow", System.currentTimeMillis()).apply()
@@ -452,8 +456,8 @@ class LinkActivity : ComponentActivity() {
             isChecked = settings.prefs.getBoolean(key, default)
             setOnCheckedChangeListener { _, checked ->
                 if (bindingPreferences) return@setOnCheckedChangeListener
-                if (key == "learning") {
-                    applyLearning(checked)
+                if (key == "learning" || key == "fuzzy") {
+                    applyInputOption(key, checked)
                 } else {
                     settings.prefs.edit().putBoolean(key, checked).apply()
                     if (key == "share") syncAction.isEnabled = checked && settings.device() != null
@@ -463,29 +467,35 @@ class LinkActivity : ComponentActivity() {
             pane.addView(this, row(2))
         }
 
-    private fun applyLearning(enabled: Boolean) {
+    private fun applyInputOption(key: String, enabled: Boolean) {
+        val isLearning = key == "learning"
+        val description = if (isLearning) "选词学习" else "模糊拼音"
+        val configure: (Boolean) -> Unit =
+            if (isLearning) { value -> LinkLearning.configure(value) } else LinkInputOptions::configureFuzzy
         learning.isEnabled = false
-        showDictionaryStatus("正在更新学习设置…")
+        fuzzy.isEnabled = false
+        showDictionaryStatus("正在更新${description}设置…")
         lifecycleScope.launch {
-            val previous = settings.prefs.getBoolean("learning", true)
+            val previous = settings.prefs.getBoolean(key, isLearning)
             val name = "ShuangpinLinkSettings"
             try {
-                withContext(Dispatchers.IO) { LinkLearning.configure(enabled) }
-                settings.prefs.edit().putBoolean("learning", enabled).apply()
+                withContext(Dispatchers.IO) { configure(enabled) }
+                settings.prefs.edit().putBoolean(key, enabled).apply()
                 RimeDaemon.createSession(name).runOnReady { deploy() }
-                showDictionaryStatus(if (enabled) "两个输入方案均已开启学习。" else "两个输入方案均已暂停学习。")
+                showDictionaryStatus("两种输入方案均已${if (enabled) "开启" else "关闭"}$description。")
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (_: Exception) {
-                settings.prefs.edit().putBoolean("learning", previous).apply()
-                withContext(Dispatchers.IO) { runCatching { LinkLearning.configure(previous) } }
+                settings.prefs.edit().putBoolean(key, previous).apply()
+                withContext(Dispatchers.IO) { runCatching { configure(previous) } }
                 bindingPreferences = true
-                learning.isChecked = previous
+                (if (isLearning) learning else fuzzy).isChecked = previous
                 bindingPreferences = false
-                showDictionaryStatus("词库设置更新失败，请稍后重试。")
+                showDictionaryStatus("${description}设置更新失败，请稍后重试。")
             } finally {
                 RimeDaemon.destroySession(name)
                 learning.isEnabled = true
+                fuzzy.isEnabled = true
             }
         }
     }

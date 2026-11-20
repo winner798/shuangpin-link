@@ -111,10 +111,10 @@ adb shell pidof "$package"
 timeout 180 bash -c 'until adb logcat -d -s rime.trime:I | grep -E "finished updating schemas: [1-9][0-9]* success, 0 failure" >/dev/null; do sleep 3; done'
 sleep 2
 adb exec-out screencap -p > "$output/android-keyboard.png"
-adb shell 'input tap 736 1920; input tap 800 1558; input tap 585 1739; input tap 795 1739'
+adb shell 'input tap 754 1937; input tap 807 1594; input tap 644 1766; input tap 861 1766'
 sleep 2
 adb exec-out screencap -p > "$output/android-candidates.png"
-adb shell input tap 475 2104
+adb shell input tap 530 2108
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor.xml"
 grep -F 'text="你好"' "$output/android-editor.xml" >/dev/null
@@ -128,7 +128,7 @@ adb shell am start -W -n "$preview/.PreviewActivity"
 adb shell input tap 200 300
 timeout 30 bash -c 'until adb shell dumpsys input_method | grep -F "mInputShown=true" >/dev/null; do sleep 1; done'
 sleep 4
-adb shell input tap 134 1400
+adb shell input tap 134 1435
 sleep 1
 adb exec-out screencap -p > "$output/android-scheme-picker.png"
 adb shell uiautomator dump /sdcard/shuangpin-schemes.xml
@@ -147,10 +147,10 @@ PY
 adb shell input tap "$scheme_x" "$scheme_y"
 # Wait for the new scheme's keyboard and its candidate view to attach.
 sleep 4
-adb shell 'input tap 736 1920; sleep 0.2; input tap 800 1558; sleep 0.2; input tap 585 1739; sleep 0.2; input tap 69 1739; sleep 0.2; input tap 900 1558'
+adb shell 'input tap 754 1937; sleep 0.2; input tap 807 1594; sleep 0.2; input tap 644 1766; sleep 0.2; input tap 114 1766; sleep 0.2; input tap 914 1594'
 sleep 1
 adb exec-out screencap -p > "$output/android-full-pinyin-candidates.png"
-adb shell input tap 475 2104
+adb shell input tap 530 2108
 sleep 1
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-full-pinyin.xml"

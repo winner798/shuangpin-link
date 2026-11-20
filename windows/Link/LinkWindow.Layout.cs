@@ -6,13 +6,14 @@ internal sealed partial class LinkWindow
     readonly Panel interopPage = new GlassPage();
     readonly Panel updatesPage = new GlassPage();
     readonly TableLayoutPanel qrBox = Stack();
-    readonly RadioButton inputTab = new GlassTab { Text = "输入" };
-    readonly RadioButton interopTab = new GlassTab { Text = "设备互通" };
-    readonly RadioButton updatesTab = new GlassTab { Text = "更新" };
+    readonly RadioButton inputTab = new GlassTab { Text = "输入", Glyph = GlassGlyph.Input };
+    readonly RadioButton interopTab = new GlassTab { Text = "设备互通", Glyph = GlassGlyph.Devices };
+    readonly RadioButton updatesTab = new GlassTab { Text = "更新", Glyph = GlassGlyph.Update };
 
     void BuildLayout()
     {
         SuspendLayout();
+        DoubleBuffered = true;
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = "双拼互联设置";
@@ -62,6 +63,8 @@ internal sealed partial class LinkWindow
         shell.Controls.Add(feedback, 0, 2);
 
         StyleCheck(learning);
+        StyleCheck(fuzzy);
+        StyleCheck(englishCorrection);
         StyleCheck(share);
         StyleCheck(pause);
 
@@ -75,6 +78,7 @@ internal sealed partial class LinkWindow
         modes.Controls.Add(Copy("输入完整拼音"), 1, 1);
         AddCards(inputPage,
             Card("输入方案", modes, Copy("按 Win + 空格选「双拼互联」。打字时按 Ctrl + ` 切换方案。"), Copy("试打"), Input(trial, "试打输入框")),
+            Card("输入辅助", fuzzy, englishCorrection, Copy("英文模式下，按空格时修正常见拼写错误。")),
             Card("个人词库", learning, share, Actions(ActionButton("立即同步词库", SyncNow), ActionButton("清空本机词库", ClearDictionary))));
 
         qrBox.BackColor = Glass.Contrast ? SystemColors.Window : Color.Transparent;

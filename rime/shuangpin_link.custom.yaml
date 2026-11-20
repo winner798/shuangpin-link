@@ -1,4 +1,6 @@
 patch:
+  show_notifications: false
+  style/ascii_tip_follow_cursor: false
   style/horizontal: true
   style/font_face: "Microsoft YaHei UI"
   style/font_point: 15
@@ -24,33 +26,33 @@ patch:
   style/color_scheme_dark: shuangpin_link_dark
   # 原生候选窗以 BGR 表示颜色，阴影只绘制在轮廓外。
   preset_color_schemes/shuangpin_link:
-    name: 双拼互联 浅紫
-    back_color: 0xfbf1f4
-    border_color: 0xf2d4df
-    shadow_color: 0x21443a5c
-    text_color: 0x321b20
-    hilited_text_color: 0x5e2d43
-    hilited_back_color: 0xffdee7
-    candidate_text_color: 0x321b20
-    comment_text_color: 0x775c64
-    label_color: 0x775c64
-    hilited_candidate_back_color: 0xffdee7
-    hilited_candidate_text_color: 0x5e2d43
-    hilited_comment_text_color: 0x795967
-    hilited_candidate_label_color: 0x936049
+    name: 双拼互联 浅色玻璃
+    back_color: 0xfff7ed
+    border_color: 0xf6e7cf
+    shadow_color: 0x21604b24
+    text_color: 0x483016
+    hilited_text_color: 0x613c13
+    hilited_back_color: 0xfff0d6
+    candidate_text_color: 0x483016
+    comment_text_color: 0x79644b
+    label_color: 0x79644b
+    hilited_candidate_back_color: 0xfff0d6
+    hilited_candidate_text_color: 0x613c13
+    hilited_comment_text_color: 0x735836
+    hilited_candidate_label_color: 0x8d6029
   preset_color_schemes/shuangpin_link_dark:
-    name: 双拼互联 深紫
-    back_color: 0x1e1211
-    border_color: 0x664450
+    name: 双拼互联 深色玻璃
+    back_color: 0x26180c
+    border_color: 0x755834
     shadow_color: 0x46000000
-    text_color: 0xfff1f6
-    hilited_text_color: 0xffe7f4
-    hilited_back_color: 0x4f3035
-    candidate_text_color: 0xfff1f6
-    comment_text_color: 0xcbb2b8
-    label_color: 0xcbb2b8
-    hilited_candidate_back_color: 0x4f3035
-    hilited_candidate_text_color: 0xfff1f6
-    hilited_comment_text_color: 0xdfc8d6
-    hilited_candidate_label_color: 0xffa4b8
+    text_color: 0xfff7ea
+    hilited_text_color: 0xfff7ea
+    hilited_back_color: 0x63451e
+    candidate_text_color: 0xfff7ea
+    comment_text_color: 0xdac6aa
+    label_color: 0xdac6aa
+    hilited_candidate_back_color: 0x63451e
+    hilited_candidate_text_color: 0xfff7ea
+    hilited_comment_text_color: 0xeedebc
+    hilited_candidate_label_color: 0xffcf82
 

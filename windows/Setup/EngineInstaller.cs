@@ -11,7 +11,9 @@ static class EngineInstaller
     [
         InputPaths.Server, InputPaths.Deployer, InputPaths.Service64, InputPaths.Service32, "rime.dll",
         "data/default.yaml", "data/shuangpin_link.yaml", "data/predict.db",
-        "data/double_pinyin_mspy.schema.yaml", "data/rime_ice.schema.yaml"
+        "data/double_pinyin_mspy.schema.yaml", "data/rime_ice.schema.yaml",
+        "data/link_profile.yaml", "data/link_spellings.yaml", "data/opencc/t2s.json",
+        "data/opencc/TSCharacters.ocd2", "data/opencc/TSPhrases.ocd2"
     ];
 
     const string LegacyClassId = "{A3F4CDED-B1E9-41EE-9CA6-7B4D0DE6CB0A}";

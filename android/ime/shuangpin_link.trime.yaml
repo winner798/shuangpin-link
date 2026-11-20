@@ -1,25 +1,25 @@
-config_version: "2"
+config_version: "3"
 name: 双拼互联
 
 style:
   candidate_text_size: 20
   candidate_padding: 12
   candidate_spacing: 0
-  candidate_view_height: 36
+  candidate_view_height: 45
   candidate_corner_radius: 11
   comment_height: 12
   comment_position: right
   comment_text_size: 10
-  horizontal_gap: 4
-  vertical_gap: 6
-  keyboard_padding: 8
+  horizontal_gap: 6
+  vertical_gap: 10
+  keyboard_padding: 2
   keyboard_padding_bottom: 6
   keyboard_padding_land: 44
   keyboard_padding_land_bottom: 4
-  keyboard_height: 264
+  keyboard_height: 250
   keyboard_height_land: 168
   key_height: 54
-  key_text_size: 23
+  key_text_size: 24
   key_long_text_size: 14
   label_text_size: 14
   symbol_text_size: 10
@@ -52,66 +52,66 @@ preset_color_schemes:
     name: 浅色
     dark_scheme: night
     light_scheme: default
-    root_background: 0xF4F1FB
-    back_color: 0xFAF7FF
-    border_color: 0xDFD6EE
-    candidate_background: 0xA6FFFCFF
-    candidate_border_color: 0xDFD6EE
-    candidate_text_color: 0x201B32
-    comment_text_color: 0x645C77
-    hilited_candidate_back_color: 0xE7DEFF
-    hilited_candidate_text_color: 0x38265F
-    hilited_comment_text_color: 0x58418F
-    hilited_candidate_button_color: 0xD9CBFA
-    keyboard_back_color: 0xF4F1FB
-    glass_highlight: 0xFFFCFF
-    glass_shade: 0xEBE4F8
+    root_background: 0xEDF7FF
+    back_color: 0xF5FCFF
+    border_color: 0xCDE3F1
+    candidate_background: 0xA6FCFEFF
+    candidate_border_color: 0xCDE3F1
+    candidate_text_color: 0x163048
+    comment_text_color: 0x4B6479
+    hilited_candidate_back_color: 0xD6F0FF
+    hilited_candidate_text_color: 0x16436A
+    hilited_comment_text_color: 0x155A8A
+    hilited_candidate_button_color: 0xBDE5FA
+    keyboard_back_color: 0xEDF7FF
+    glass_highlight: 0xFCFEFF
+    glass_shade: 0xD4EBF9
     key_back_color: 0xD9FFFFFF
-    key_border_color: 0xDFD6EE
-    key_text_color: 0x201B32
-    key_symbol_color: 0x645C77
-    hilited_key_back_color: 0xD9CBFA
-    hilited_key_text_color: 0x201B32
-    text_color: 0x201B32
-    text_back_color: 0xF9F5FF
-    liquid_keyboard_background: 0xF4F1FB
-    action_back: 0xE8E1F3
-    emphasis_back: 0xB8A4FF
-    emphasis_text: 0x201B32
-    mode_back: 0xE7DEFF
-    mode_text: 0x58418F
+    key_border_color: 0xCDE3F1
+    key_text_color: 0x163048
+    key_symbol_color: 0x4B6479
+    hilited_key_back_color: 0xBDE5FA
+    hilited_key_text_color: 0x163048
+    text_color: 0x163048
+    text_back_color: 0xF2FAFF
+    liquid_keyboard_background: 0xEDF7FF
+    action_back: 0xDCEBF4
+    emphasis_back: 0x82CFFF
+    emphasis_text: 0x163048
+    mode_back: 0xD6F0FF
+    mode_text: 0x155A8A
   night:
     name: 深色
     dark_scheme: night
     light_scheme: default
-    root_background: 0x11121E
-    back_color: 0x222036
-    border_color: 0x413A56
-    candidate_background: 0xA629253A
-    candidate_border_color: 0x413A56
-    candidate_text_color: 0xF6F1FF
-    comment_text_color: 0xB8B2CB
-    hilited_candidate_back_color: 0x35304F
-    hilited_candidate_text_color: 0xF6F1FF
-    hilited_comment_text_color: 0xD8CCFF
-    hilited_candidate_button_color: 0x50466D
-    keyboard_back_color: 0x11121E
-    glass_highlight: 0x262136
-    glass_shade: 0x161522
-    key_back_color: 0xDA322E45
-    key_border_color: 0x47405B
-    key_text_color: 0xF6F1FF
-    key_symbol_color: 0xB8B2CB
-    hilited_key_back_color: 0x51466F
-    hilited_key_text_color: 0xF6F1FF
-    text_color: 0xF6F1FF
-    text_back_color: 0x242138
-    liquid_keyboard_background: 0x11121E
-    action_back: 0x39334E
-    emphasis_back: 0xB8A4FF
-    emphasis_text: 0x201B32
-    mode_back: 0x35304F
-    mode_text: 0xD8CCFF
+    root_background: 0x0C1826
+    back_color: 0x1A334A
+    border_color: 0x34536D
+    candidate_background: 0xA61A344B
+    candidate_border_color: 0x34536D
+    candidate_text_color: 0xEAF7FF
+    comment_text_color: 0xAAC6DA
+    hilited_candidate_back_color: 0x1E4563
+    hilited_candidate_text_color: 0xEAF7FF
+    hilited_comment_text_color: 0xA9DFFF
+    hilited_candidate_button_color: 0x336082
+    keyboard_back_color: 0x0C1826
+    glass_highlight: 0x1B3954
+    glass_shade: 0x101E2D
+    key_back_color: 0xDA27425A
+    key_border_color: 0x355672
+    key_text_color: 0xEAF7FF
+    key_symbol_color: 0xAAC6DA
+    hilited_key_back_color: 0x376485
+    hilited_key_text_color: 0xEAF7FF
+    text_color: 0xEAF7FF
+    text_back_color: 0x1A3147
+    liquid_keyboard_background: 0x0C1826
+    action_back: 0x2B495F
+    emphasis_back: 0x82CFFF
+    emphasis_text: 0x163048
+    mode_back: 0x1E4563
+    mode_text: 0xA9DFFF
 
 tool_bar:
   button_spacing: 4
@@ -145,6 +145,7 @@ preset_keys:
 preset_keyboards:
   default:
     name: 字母键盘
+    label_transform: uppercase
     width: 10
     columns: 10
     ascii_mode: 0
@@ -161,31 +162,33 @@ preset_keyboards:
       - {click: i, long_click: '8'}
       - {click: o, long_click: '9'}
       - {click: p, long_click: '0'}
-      - {click: a}
-      - {click: s}
-      - {click: d}
-      - {click: f}
-      - {click: g}
-      - {click: h}
-      - {click: j}
-      - {click: k}
-      - {click: l}
-      - {click: ';', long_click: ':'}
-      - {click: Shift_L, width: 14, key_back_color: action_back}
-      - {click: z}
-      - {click: x}
-      - {click: c}
-      - {click: v}
-      - {click: b}
-      - {click: n}
-      - {click: m}
-      - {click: BackSpace, width: 16, key_back_color: action_back}
-      - {click: Number_board, width: 16, key_back_color: action_back, key_text_size: 16}
-      - {click: ',', long_click: '!', width: 9}
+      - {width: 5}
+      - {click: a, long_click: '-'}
+      - {click: s, long_click: '/'}
+      - {click: d, long_click: ':'}
+      - {click: f, long_click: ';', swipe_up: ';'}
+      - {click: g, long_click: '('}
+      - {click: h, long_click: ')'}
+      - {click: j, long_click: '~'}
+      - {click: k, long_click: '“'}
+      - {click: l, long_click: '”'}
+      - {width: 5}
+      - {click: Shift_L, width: 13.4, key_back_color: action_back}
+      - {width: 1.6}
+      - {click: z, long_click: '@'}
+      - {click: x, long_click: '.'}
+      - {click: c, long_click: '#'}
+      - {click: v, long_click: '、'}
+      - {click: b, long_click: '?'}
+      - {click: n, long_click: '!'}
+      - {click: m, long_click: '…'}
+      - {width: 1.6}
+      - {click: BackSpace, width: 13.4, key_back_color: action_back}
+      - {click: Number_board, width: 20, key_back_color: action_back, key_text_size: 18}
+      - {click: ',', long_click: '.', width: 10}
       - {click: Space, width: 38, key_text_size: 16}
-      - {click: '.', long_click: '?', width: 8}
-      - {click: Language_mode, width: 10, key_back_color: mode_back, key_text_color: mode_text, key_text_size: 16}
-      - {click: Return, width: 19, key_back_color: emphasis_back, key_text_color: emphasis_text, key_border_color: emphasis_back, key_text_size: 17}
+      - {click: Language_mode, width: 11, key_back_color: mode_back, key_text_color: mode_text, key_text_size: 16}
+      - {click: Return, width: 21, key_back_color: emphasis_back, key_text_color: emphasis_text, key_border_color: emphasis_back, key_text_size: 17}
   number:
     name: 数字与符号
     width: 10

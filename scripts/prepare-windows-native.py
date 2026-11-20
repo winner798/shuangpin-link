@@ -23,7 +23,7 @@ def replace(path, before, after, expected=1):
 
 def replace_pattern(path, pattern, after):
     source = path.read_text(encoding='utf-8-sig')
-    source, count = re.subn(pattern, lambda _: after, source)
+    source, count = re.subn(pattern, after if callable(after) else lambda _: after, source)
     if count != 1:
         raise RuntimeError(f'{path.name}: expected one match for {pattern!r}')
     path.write_text(source, encoding='utf-8')
@@ -38,6 +38,8 @@ def write_overlay(source, version, boost):
     ):
         shutil.copyfile(native / name, source / destination)
     shutil.copyfile(ROOT / 'windows/Link/ShuangpinLink.ico', source / 'resource/weasel.ico')
+    for name in ('en', 'zh', 'full', 'half', 'reload'):
+        shutil.copyfile(native / 'icons' / f'{name}.ico', source / 'resource' / f'{name}.ico')
 
     properties = (source / 'weasel.props.template').read_text(encoding='utf-8')
     major, minor, patch = version.split('.')
@@ -96,6 +98,32 @@ fs::path WeaselUserDataPath() {
     replace(handler, 'WeaselDeployerMutex', 'ShuangpinLinkDeployerMutex')
 
     tsf = source / 'WeaselTSF'
+    shutil.copyfile(native / 'EnglishCorrection.h', tsf / 'EnglishCorrection.h')
+    corrections = (ROOT / 'rime/english_corrections.tsv').read_text(encoding='ascii').splitlines()
+    entries = [tuple(row.split('\t')) for row in corrections]
+    if len({typo for typo, _ in entries}) != len(entries) or any(
+            not re.fullmatch(r'[a-z]{3,24}', word) for entry in entries for word in entry):
+        raise ValueError('Invalid English correction table')
+    (tsf / 'LinkEnglishWords.h').write_text(
+        '#pragma once\n#include <string_view>\n#include <utility>\n'
+        'constexpr std::pair<std::wstring_view, std::wstring_view> kLinkEnglishWords[] = {\n'
+        + ''.join(f'  {{L"{typo}", L"{spelling}"}},\n' for typo, spelling in entries) + '};\n',
+        encoding='ascii')
+    key_events = tsf / 'KeyEventSink.cpp'
+    replace(key_events, '#include "CandidateList.h"', '#include "CandidateList.h"\n#include "EnglishCorrection.h"')
+    for test in (True, False):
+        action = 'OnTestKeyDown' if test else 'OnKeyDown'
+        apply = 'false' if test else 'true'
+        replace_pattern(key_events, rf'(?m)^(STDAPI WeaselTSF::{action}\([^{{]+\{{)\n',
+            lambda match: match[1] + f'''
+  if (pContext && _status.ascii_mode && !_status.composing && !_fTestKeyDownPending &&
+      !(_isToOpenClose && !_IsKeyboardOpen()) && !_IsKeyboardDisabled() &&
+      link_english::HandleSpace(this, pContext, _tfClientId, wParam, lParam, {apply})) {{
+    _fTestKeyUpPending = FALSE;
+    *pfEaten = TRUE;
+    return S_OK;
+  }}
+''')
     globals_cpp = tsf / 'Globals.cpp'
     for old, new in (
         ('c_clsidTextService', '0xa6d4a312, 0x7df3, 0x4bd0, {0x9d, 0x84, 0xbb, 0xd2, 0x5b, 0xc6, 0x0a, 0xa1}'),
