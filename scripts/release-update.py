@@ -75,9 +75,9 @@ def check_package_versions(packages, aapt, code, name):
     if product_version != f"{name}.0":
         raise ValueError(f"Windows installer file version must be {name}.0")
     for arch in ("arm64-v8a", "x86_64"):
-        apk = packages / ARTIFACTS[f"android-{arch}"]
-        details = subprocess.check_output([str(aapt.resolve()), "dump", "badging", str(apk)],
-                                          encoding="utf-8", errors="replace")
+        apk = ARTIFACTS[f"android-{arch}"]
+        details = subprocess.check_output([str(aapt.resolve()), "dump", "badging", apk],
+                                          cwd=packages, encoding="utf-8", errors="replace")
         package = rf"^package: name='io\.github\.winner798\.shuangpinlink' versionCode='{code}' versionName='{re.escape(name)}'"
         detected_arch = re.search(r"(?m)^native-code:\s+(.+)$", details)
         if (not re.search(package, details, re.MULTILINE)
