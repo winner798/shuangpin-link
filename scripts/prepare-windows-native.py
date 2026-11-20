@@ -113,13 +113,15 @@ fs::path WeaselUserDataPath() {
     replace(key_events, '#include "CandidateList.h"', '#include "CandidateList.h"\n#include "EnglishCorrection.h"')
     for test in (True, False):
         action = 'OnTestKeyDown' if test else 'OnKeyDown'
-        handle = '' if test else '\n      && link_english::HandleSpace(this, pContext, _tfClientId)'
+        # Some TSF hosts only call OnTestKeyDown. Follow the normal input path
+        # and use its pending flag so OnKeyDown cannot apply the same space twice.
+        pending = '\n    _fTestKeyDownPending = TRUE;' if test else ''
         replace_pattern(key_events, rf'(?m)^(STDAPI WeaselTSF::{action}\([^{{]+\{{)\n',
             lambda match: match[1] + f'''
   if (wParam == VK_SPACE && pContext && _status.ascii_mode && !_status.composing && !_fTestKeyDownPending &&
       !(_isToOpenClose && !_IsKeyboardOpen()) && !_IsKeyboardDisabled() &&
-      link_english::EnabledForSpace(lParam){handle}) {{
-    _fTestKeyUpPending = FALSE;
+      link_english::EnabledForSpace(lParam) && link_english::HandleSpace(this, pContext, _tfClientId)) {{
+    _fTestKeyUpPending = FALSE;{pending}
     *pfEaten = TRUE;
     return S_OK;
   }}
