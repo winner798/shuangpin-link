@@ -145,8 +145,13 @@ print((left + right) // 2, (top + bottom) // 2)
 PY
 )
 adb shell input tap "$scheme_x" "$scheme_y"
+# Wait for the new scheme's keyboard and its candidate view to attach.
+sleep 4
+adb shell 'input tap 736 1920; sleep 0.2; input tap 800 1558; sleep 0.2; input tap 585 1739; sleep 0.2; input tap 69 1739; sleep 0.2; input tap 900 1558'
 sleep 1
-adb shell 'input tap 736 1920; input tap 800 1558; input tap 585 1739; input tap 69 1739; input tap 900 1558; input tap 475 2104'
+adb exec-out screencap -p > "$output/android-full-pinyin-candidates.png"
+adb shell input tap 475 2104
+sleep 1
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-full-pinyin.xml"
 grep -F 'text="你好"' "$output/android-editor-full-pinyin.xml" >/dev/null
