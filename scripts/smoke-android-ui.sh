@@ -155,3 +155,50 @@ sleep 1
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-full-pinyin.xml"
 grep -F 'text="你好"' "$output/android-editor-full-pinyin.xml" >/dev/null
+
+# Enable the actual opt-in switch before exercising the on-screen English keys.
+adb shell am force-stop "$preview"
+adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "$package"
+correction=''
+for _ in {1..5}; do
+    adb shell uiautomator dump --compressed /sdcard/shuangpin-options.xml >/dev/null
+    adb exec-out cat /sdcard/shuangpin-options.xml > "$output/android-options.xml"
+    correction=$(python3 - "$output/android-options.xml" <<'PY'
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+for node in ET.parse(sys.argv[1]).findall('.//node[@text="英文自动纠错"]'):
+    left, top, right, bottom = map(int, re.findall(r"\d+", node.get("bounds")))
+    if bottom - top >= 75:
+        assert node.get("checked") == "false"
+        print((left + right) // 2, (top + bottom) // 2)
+        break
+PY
+)
+    if [[ -n $correction ]]; then break; fi
+    adb shell input swipe 540 1810 540 980 330
+    sleep 1
+done
+test -n "$correction"
+read -r correction_x correction_y <<< "$correction"
+adb shell input tap "$correction_x" "$correction_y"
+adb shell uiautomator dump --compressed /sdcard/shuangpin-options.xml >/dev/null
+adb exec-out cat /sdcard/shuangpin-options.xml > "$output/android-options.xml"
+python3 - "$output/android-options.xml" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+node = ET.parse(sys.argv[1]).find('.//node[@text="英文自动纠错"]')
+assert node is not None and node.get("checked") == "true"
+PY
+
+adb shell am start -W -n "$preview/.PreviewActivity"
+adb shell input tap 200 300
+timeout 30 bash -c 'until adb shell dumpsys input_method | grep -F "mInputShown=true" >/dev/null; do sleep 1; done'
+sleep 3
+adb shell 'input tap 789 2108; sleep 0.5; input tap 486 1594; input tap 270 1594; input tap 644 1766; input tap 530 2108'
+sleep 1
+adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml >/dev/null
+adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-english.xml"
+grep -F 'text="the "' "$output/android-editor-english.xml" >/dev/null
