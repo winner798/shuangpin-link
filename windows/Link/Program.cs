@@ -15,9 +15,28 @@ internal static class Program
     static void Main(string[] args)
     {
         using var instance = new Mutex(true, @"Local\ShuangpinLink", out bool first);
-        if (!first) return;
+        using var showSettings = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\ShuangpinLink.ShowSettings");
+        bool startHidden = args.Contains("--tray");
+        if (!first)
+        {
+            if (!startHidden) showSettings.Set();
+            return;
+        }
+        if (InputPaths.InstalledEngine() is { } engine)
+        {
+            try { InputPaths.StartTool(engine, InputPaths.Server).Dispose(); }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { }
+        }
         ApplicationConfiguration.Initialize();
-        Application.Run(new LinkWindow(args.Contains("--tray")));
+        using var window = new LinkWindow(startHidden);
+        _ = window.Handle;
+        var activation = ThreadPool.RegisterWaitForSingleObject(showSettings, (_, _) =>
+        {
+            try { window.BeginInvoke(window.Reveal); }
+            catch (InvalidOperationException) { }
+        }, null, Timeout.Infinite, executeOnlyOnce: false);
+        try { Application.Run(window); }
+        finally { activation.Unregister(null); }
     }
 }
 
@@ -155,7 +174,7 @@ internal sealed partial class LinkWindow : Form
         await Restart();
     }
 
-    void Reveal() { Show(); WindowState = FormWindowState.Normal; Activate(); }
+    internal void Reveal() { Show(); WindowState = FormWindowState.Normal; Activate(); }
 
     protected override void OnHandleCreated(EventArgs e)
     {

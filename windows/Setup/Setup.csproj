@@ -9,6 +9,8 @@
     <ApplicationIcon>../Link/ShuangpinLink.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Shared/InputPaths.cs" Link="InputPaths.cs" />
+    <Compile Include="../Shared/InputDataMigration.cs" Link="InputDataMigration.cs" />
     <EmbeddedResource Include="../../.build/setup-payload.zip" LogicalName="install.zip" />
     <Compile Include="../Link/LearningSettings.cs" Link="LearningSettings.cs" />
   </ItemGroup>

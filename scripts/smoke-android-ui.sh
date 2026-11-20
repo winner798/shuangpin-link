@@ -111,10 +111,10 @@ adb shell pidof "$package"
 timeout 180 bash -c 'until adb logcat -d -s rime.trime:I | grep -E "finished updating schemas: [1-9][0-9]* success, 0 failure" >/dev/null; do sleep 3; done'
 sleep 2
 adb exec-out screencap -p > "$output/android-keyboard.png"
-adb shell 'input tap 746 1953; input tap 800 1635; input tap 585 1794; input tap 795 1794'
+adb shell 'input tap 736 1920; input tap 800 1558; input tap 585 1739; input tap 795 1739'
 sleep 2
 adb exec-out screencap -p > "$output/android-candidates.png"
-adb shell input tap 573 2115
+adb shell input tap 475 2104
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor.xml"
 grep -F 'text="你好"' "$output/android-editor.xml" >/dev/null
@@ -128,7 +128,7 @@ adb shell am start -W -n "$preview/.PreviewActivity"
 adb shell input tap 200 300
 timeout 30 bash -c 'until adb shell dumpsys input_method | grep -F "mInputShown=true" >/dev/null; do sleep 1; done'
 sleep 4
-adb shell input tap 134 1488
+adb shell input tap 134 1400
 sleep 1
 adb exec-out screencap -p > "$output/android-scheme-picker.png"
 adb shell uiautomator dump /sdcard/shuangpin-schemes.xml
@@ -146,7 +146,7 @@ PY
 )
 adb shell input tap "$scheme_x" "$scheme_y"
 sleep 1
-adb shell 'input tap 746 1953; input tap 800 1635; input tap 585 1794; input tap 69 1794; input tap 900 1635; input tap 573 2115'
+adb shell 'input tap 736 1920; input tap 800 1558; input tap 585 1739; input tap 69 1739; input tap 900 1558; input tap 475 2104'
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-full-pinyin.xml"
 grep -F 'text="你好"' "$output/android-editor-full-pinyin.xml" >/dev/null
