@@ -151,13 +151,15 @@ internal static class Program
                 foreach (ushort language in new[] { SimplifiedChinese, TraditionalChinese })
                 {
                     var profiles = (ITfInputProcessorProfiles)manager;
+                    // The hosted runner can enable the zh-CN TIP without adding another Windows language.
+                    bool expectedEnabled = seed && language == SimplifiedChinese;
                     if (seed)
                     {
                         string icon = Path.Combine(Environment.SystemDirectory, "shell32.dll");
                         Marshal.ThrowExceptionForHR(((ITfInputProcessorProfileManager)manager).RegisterProfile(
                             LegacyClass, language, LegacyProfile, label, (uint)label.Length, icon,
                             (uint)icon.Length, 0, IntPtr.Zero, 0, false, 0));
-                        if (!InstallLayoutOrTip($"0x{language:X4}:{LegacyClass:B}{LegacyProfile:B}", 0))
+                        if (expectedEnabled && !InstallLayoutOrTip($"0x{language:X4}:{LegacyClass:B}{LegacyProfile:B}", 0))
                             throw new InvalidOperationException($"Windows could not enable fixture TIP 0x{language:X4}.");
                     }
 
@@ -165,7 +167,7 @@ internal static class Program
                         LegacyClass, language, LegacyProfile, out string description));
                     Marshal.ThrowExceptionForHR(profiles.IsEnabledLanguageProfile(
                         LegacyClass, language, LegacyProfile, out bool enabled));
-                    if (description.TrimEnd('\0') != label || enabled != seed)
+                    if (description.TrimEnd('\0') != label || enabled != expectedEnabled)
                         throw new InvalidOperationException($"Fixture TIP 0x{language:X4} unexpectedly has enabled={enabled} and label [{description}].");
                     Console.WriteLine($"Fixture TIP 0x{language:X4} remains registered and user enabled={enabled}.");
                 }
