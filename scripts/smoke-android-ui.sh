@@ -197,8 +197,14 @@ adb shell am start -W -n "$preview/.PreviewActivity"
 adb shell input tap 200 300
 timeout 30 bash -c 'until adb shell dumpsys input_method | grep -F "mInputShown=true" >/dev/null; do sleep 1; done'
 sleep 3
-adb shell 'input tap 789 2108; sleep 0.5; input tap 486 1594; input tap 270 1594; input tap 644 1766; input tap 530 2108'
+adb shell 'input tap 789 2108; sleep 0.5; input tap 486 1594; input tap 270 1594; input tap 644 1766'
+sleep 1
+adb exec-out screencap -p > "$output/android-before-english-space.png"
+adb shell input tap 530 2108
 sleep 1
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml >/dev/null
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-english.xml"
-grep -F 'text="the "' "$output/android-editor-english.xml" >/dev/null
+if ! grep -F 'text="the "' "$output/android-editor-english.xml" >/dev/null; then
+    adb logcat -d -s ShuangpinCorrection:D
+    exit 1
+fi

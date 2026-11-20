@@ -123,6 +123,14 @@ def apply_design(src, assets):
                 drawLabel(canvas, label)
             }''')
 
+    queued_key = "                service.postRimeJob {\n                    if (service.hookKeyboard(keyEventCode, m)) {"
+    apply_edit(actions, queued_key, '''                service.postRimeJob {
+                    if (keyEventCode == KeyEvent.KEYCODE_SPACE && m == 0) {
+                        val ascii = getRuntimeOption("ascii_mode")
+                        if (ascii && com.osfans.trime.link.LinkInputOptions.correctEnglish(service)) return@postRimeJob
+                    }
+                    if (service.hookKeyboard(keyEventCode, m)) {''')
+
     ime = java / "ime/core/TrimeInputMethodService.kt"
     commit = "                    commitText(it.data.text)"
     apply_edit(ime, commit, '''                    if (it.data.text != " " || !correctEnglishSpace()) {
