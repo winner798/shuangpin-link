@@ -1,0 +1,14 @@
+/.build/
+/dist/
+/.local/
+**/obj/
+**/bin/
+**/__pycache__/
+*.pem
+*.pfx
+*.jks
+*.keystore
+*.sqlite*
+*.userdb.txt
+local.properties
+

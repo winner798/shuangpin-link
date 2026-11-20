@@ -1,0 +1,134 @@
+package com.osfans.trime.link
+
+import android.content.Context
+import android.os.UserManager
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.IOException
+import java.net.URI
+import java.security.KeyStore
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+import javax.net.ssl.HttpsURLConnection
+
+internal const val CLIP_LIMIT = 64 * 1024
+internal const val DICT_LIMIT = 8 * 1024 * 1024
+internal const val REMOTE_LABEL = "双拼互联 · 远端"
+private const val KEY_ALIAS = "ime-sync-device-v1"
+
+internal fun encode(data: ByteArray): String = Base64.encodeToString(data, Base64.NO_WRAP)
+internal fun decode(data: String): ByteArray = Base64.decode(data, Base64.NO_WRAP)
+
+internal object Sealing {
+    private fun cipher(mode: Int, key: SecretKey, nonce: ByteArray, kind: String) =
+        Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(mode, key, GCMParameterSpec(128, nonce))
+            updateAAD("ime-sync/v1/$kind".toByteArray())
+        }
+
+    fun seal(key: String, kind: String, body: ByteArray): String {
+        val nonce = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        return encode(nonce + cipher(Cipher.ENCRYPT_MODE, SecretKeySpec(decode(key), "AES"), nonce, kind).doFinal(body))
+    }
+
+    fun open(key: String, kind: String, envelope: String, limit: Int): ByteArray {
+        val data = decode(envelope)
+        require(data.size in 28..limit + 28)
+        val nonce = data.copyOfRange(0, 12)
+        return cipher(Cipher.DECRYPT_MODE, SecretKeySpec(decode(key), "AES"), nonce, kind).doFinal(data, 12, data.size - 12)
+    }
+}
+
+internal class LinkHttp(server: String, private val token: String) {
+    private val base = URI(server.trimEnd('/') + "/").also {
+        require(it.scheme == "https" && it.host != null && it.userInfo == null && it.query == null && it.fragment == null)
+    }
+
+    suspend fun call(method: String, route: String, body: JSONObject? = null): JSONObject? = withContext(Dispatchers.IO) {
+        val conn = base.resolve("v1/$route").toURL().openConnection() as HttpsURLConnection
+        try {
+            conn.requestMethod = method
+            conn.connectTimeout = 7000
+            conn.readTimeout = 26000
+            conn.instanceFollowRedirects = false
+            conn.setRequestProperty("Authorization", "Bearer $token")
+            if (body != null) {
+                val bytes = body.toString().toByteArray()
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setFixedLengthStreamingMode(bytes.size)
+                conn.doOutput = true
+                conn.outputStream.use { it.write(bytes) }
+            }
+            when (val code = conn.responseCode) {
+                204 -> null
+                200, 201 -> conn.inputStream.use { input ->
+                    val limit = (DICT_LIMIT + 128) * 4 / 3 + 256
+                    val output = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val size = input.read(buffer)
+                        if (size < 0) break
+                        if (output.size() + size > limit) throw IOException("Response too large")
+                        output.write(buffer, 0, size)
+                    }
+                    JSONObject(output.toString("UTF-8"))
+                }
+                else -> throw LinkHttpError(code)
+            }
+        } finally {
+            conn.disconnect()
+        }
+    }
+}
+
+internal class LinkHttpError(val code: Int) : IOException("HTTP $code")
+internal data class LinkDevice(val server: String, val token: String, val key: String)
+
+internal class LinkSettings(context: Context) {
+    private val app = context.applicationContext
+    val unlocked: Boolean get() = app.getSystemService(UserManager::class.java).isUserUnlocked
+    val prefs get() = app.getSharedPreferences("ime_sync", Context.MODE_PRIVATE)
+
+    private fun wrappingKey(): SecretKey {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (store.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
+            init(KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256).build())
+            generateKey()
+        }
+    }
+
+    fun device(): LinkDevice? {
+        if (!unlocked) return null
+        val record = prefs.getString("device", null) ?: return null
+        return runCatching {
+            val data = decode(record)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, wrappingKey(), GCMParameterSpec(128, data, 0, 12))
+            val json = JSONObject(String(cipher.doFinal(data, 12, data.size - 12), Charsets.UTF_8))
+            LinkDevice(json.getString("server"), json.getString("token"), json.getString("key"))
+        }.getOrNull()
+    }
+
+    fun save(device: LinkDevice) {
+        val json = JSONObject().put("server", device.server).put("token", device.token).put("key", device.key)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, wrappingKey()) }
+        val record = encode(cipher.iv + cipher.doFinal(json.toString().toByteArray()))
+        check(prefs.edit().remove("dictionaryReceived").remove("dictionarySent").putBoolean("paused", false)
+            .putBoolean("share", true).putString("device", record).commit())
+    }
+
+    fun forget() {
+        prefs.edit().remove("dictionaryReceived").remove("dictionarySent").remove("device").apply()
+    }
+}

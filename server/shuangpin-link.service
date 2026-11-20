@@ -1,0 +1,25 @@
+[Unit]
+Description=Shuangpin Link encrypted sync relay
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -B /opt/shuangpin-link/relay.py --db /var/lib/shuangpin-link/relay.sqlite --setup-hash-file %d/setup-hash
+LoadCredential=setup-hash:/etc/shuangpin-link/setup.sha256
+DynamicUser=yes
+StateDirectory=shuangpin-link
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+MemoryHigh=110M
+MemoryMax=160M
+TasksMax=24
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+
