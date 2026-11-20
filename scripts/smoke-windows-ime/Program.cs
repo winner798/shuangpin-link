@@ -232,12 +232,25 @@ internal static class Program
 
     private static async Task AssertEnglishCorrection(Form window, RichTextBox editor, string output)
     {
+        Marshal.ThrowExceptionForHR(TF_CreateLangBarItemMgr(out var languageBar));
+        var inputMode = new Guid("2c77a81e-41cc-4178-a3a7-5f8a987568e6");
+        Marshal.ThrowExceptionForHR(languageBar.GetItem(ref inputMode, out object? item));
+        if (item is not ITfLangBarItemButton mode)
+            throw new InvalidOperationException("The language bar did not provide an input mode button.");
+        Marshal.ThrowExceptionForHR(mode.GetText(out string label));
+        if (label != "双拼互联")
+            throw new InvalidOperationException($"Unexpected language bar mode button: {label}.");
+
         using var options = Registry.CurrentUser.CreateSubKey(@"Software\ShuangpinLink\IME");
         object? previous = options.GetValue("EnglishAutocorrect");
+        var area = Rectangle.Empty;
+        const int leftClick = 2;
+        bool switched = false;
         try
         {
             options.SetValue("EnglishAutocorrect", 1);
-            SendChord(Keys.LShiftKey);
+            Marshal.ThrowExceptionForHR(mode.OnClick(leftClick, Point.Empty, ref area));
+            switched = true;
             await Task.Delay(300);
             foreach (var key in new[] { Keys.T, Keys.E, Keys.H })
             {
@@ -245,6 +258,10 @@ internal static class Program
                 await Task.Delay(70);
             }
             await WaitFor(() => editor.Text == "teh", "The editor did not receive the English literal before Space.");
+            SendChord(Keys.Escape);
+            await Task.Delay(200);
+            if (editor.Text != "teh")
+                throw new InvalidOperationException("The word was still in Chinese composition after switching the language bar.");
             SendChord(Keys.Space);
             try { await WaitFor(() => editor.Text == "the ", "The native English corrector did not replace teh on Space."); }
             catch (InvalidOperationException error)
@@ -258,7 +275,9 @@ internal static class Program
         {
             if (previous is null) options.DeleteValue("EnglishAutocorrect", throwOnMissingValue: false);
             else options.SetValue("EnglishAutocorrect", previous);
-            SendChord(Keys.LShiftKey);
+            if (switched) mode.OnClick(leftClick, Point.Empty, ref area);
+            Marshal.ReleaseComObject(mode);
+            Marshal.ReleaseComObject(languageBar);
             editor.Clear();
         }
     }
@@ -400,6 +419,30 @@ internal static class Program
         public uint Capabilities;
         public IntPtr Layout;
         public uint Flags;
+    }
+
+    [DllImport("msctf.dll")]
+    private static extern int TF_CreateLangBarItemMgr(out ITfLangBarItemMgr manager);
+
+    [ComImport, Guid("ba468c55-9956-4fb1-a59d-52a7dd7cc6aa"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface ITfLangBarItemMgr
+    {
+        [PreserveSig] int EnumItems(out IntPtr enumerator);
+        [PreserveSig] int GetItem(ref Guid id, [MarshalAs(UnmanagedType.IUnknown)] out object? item);
+    }
+
+    [ComImport, Guid("28c7f1d0-de25-11d2-afdd-00105a2799b5"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface ITfLangBarItemButton
+    {
+        [PreserveSig] int GetInfo(IntPtr info);
+        [PreserveSig] int GetStatus(out uint status);
+        [PreserveSig] int Show([MarshalAs(UnmanagedType.Bool)] bool show);
+        [PreserveSig] int GetTooltipString([MarshalAs(UnmanagedType.BStr)] out string tooltip);
+        [PreserveSig] int OnClick(int click, Point point, ref Rectangle area);
+        [PreserveSig] int InitMenu(IntPtr menu);
+        [PreserveSig] int OnMenuSelect(uint item);
+        [PreserveSig] int GetIcon(out IntPtr icon);
+        [PreserveSig] int GetText([MarshalAs(UnmanagedType.BStr)] out string text);
     }
 
     [ComImport, Guid("71c6e74c-0f28-11d8-a82a-00065b84435c"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
