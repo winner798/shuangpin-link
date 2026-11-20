@@ -118,7 +118,9 @@ fs::path WeaselUserDataPath() {
         pending = '\n    _fTestKeyDownPending = TRUE;' if test else ''
         replace_pattern(key_events, rf'(?m)^(STDAPI WeaselTSF::{action}\([^{{]+\{{)\n',
             lambda match: match[1] + f'''
-  if (wParam == VK_SPACE && pContext && _status.ascii_mode && !_status.composing && !_fTestKeyDownPending &&
+  if (wParam == VK_SPACE && !_fTestKeyDownPending)
+    link_english::Trace("key event, ascii mode", S_OK, _status.ascii_mode);
+  if (wParam == VK_SPACE && pContext && _status.ascii_mode && !_fTestKeyDownPending &&
       !(_isToOpenClose && !_IsKeyboardOpen()) && !_IsKeyboardDisabled() &&
       link_english::EnabledForSpace(lParam) && link_english::HandleSpace(this, pContext, _tfClientId)) {{
     _fTestKeyUpPending = FALSE;{pending}

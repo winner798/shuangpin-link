@@ -249,6 +249,7 @@ internal static class Program
         try
         {
             options.SetValue("EnglishAutocorrect", 1);
+            Environment.SetEnvironmentVariable("SHUANGPIN_LINK_INPUT_TEST_TRACE", "1");
             Marshal.ThrowExceptionForHR(mode.OnClick(leftClick, Point.Empty, ref area));
             switched = true;
             await Task.Delay(300);
@@ -275,6 +276,7 @@ internal static class Program
         {
             if (previous is null) options.DeleteValue("EnglishAutocorrect", throwOnMissingValue: false);
             else options.SetValue("EnglishAutocorrect", previous);
+            Environment.SetEnvironmentVariable("SHUANGPIN_LINK_INPUT_TEST_TRACE", null);
             if (switched) mode.OnClick(leftClick, Point.Empty, ref area);
             Marshal.ReleaseComObject(mode);
             Marshal.ReleaseComObject(languageBar);

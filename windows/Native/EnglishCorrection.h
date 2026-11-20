@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdio>
 #include <cwctype>
 #include <inputscope.h>
 #include <string_view>
@@ -8,6 +9,19 @@
 #include "LinkEnglishWords.h"
 
 namespace link_english {
+
+inline void Trace(const char* step, HRESULT code = S_OK, long value = 0) {
+  wchar_t enabled[2]{};
+  if (GetEnvironmentVariableW(L"SHUANGPIN_LINK_INPUT_TEST_TRACE", enabled, ARRAYSIZE(enabled)) != 1 ||
+      enabled[0] != L'1')
+    return;
+  char message[144]{};
+  const int length = sprintf_s(message, "English correction: %s (%08lx, %ld)\n", step,
+                               static_cast<unsigned long>(code), value);
+  DWORD written = 0;
+  if (length > 0)
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), message, static_cast<DWORD>(length), &written, nullptr);
+}
 
 inline bool IsLetter(wchar_t c) {
   return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
@@ -55,31 +69,26 @@ class SpaceEdit final : public CEditSession {
       : CEditSession(service, context) {}
 
   STDMETHODIMP DoEditSession(TfEditCookie edit) override {
-    if (CorrectPreviousWord(edit))
-      return S_OK;
-
-    // An editor can grant its write lock asynchronously. Deliver the original
-    // space even if the caret or spelling changed while the request was queued.
-    com_ptr<ITfInsertAtSelection> insert;
-    HRESULT result = _pContext->QueryInterface(IID_PPV_ARGS(&insert));
-    if (FAILED(result))
-      return result;
-    return insert->InsertTextAtSelection(edit, TF_IAS_NOQUERY, L" ", 1, nullptr);
+    return CorrectPreviousWord(edit) ? S_OK : S_FALSE;
   }
 
  private:
   bool CorrectPreviousWord(TfEditCookie edit) {
     TF_SELECTION selection{};
     ULONG count = 0;
-    if (FAILED(_pContext->GetSelection(edit, TF_DEFAULT_SELECTION, 1, &selection, &count)) ||
-        count != 1 || !selection.range)
+    HRESULT result = _pContext->GetSelection(edit, TF_DEFAULT_SELECTION, 1, &selection, &count);
+    Trace("get selection", result, count);
+    if (FAILED(result) || count != 1 || !selection.range)
       return false;
     com_ptr<ITfRange> caret;
     caret.Attach(selection.range);
     BOOL empty = FALSE;
-    if (FAILED(caret->IsEmpty(edit, &empty)) || !empty ||
-        selection.style.fInterimChar || !IsPlainText(_pContext, caret, edit))
+    result = caret->IsEmpty(edit, &empty);
+    if (FAILED(result) || !empty || selection.style.fInterimChar ||
+        !IsPlainText(_pContext, caret, edit)) {
+      Trace("excluded text scope or selection", result, empty);
       return false;
+    }
 
     com_ptr<ITfRange> range;
     if (FAILED(caret->Clone(&range)))
@@ -87,8 +96,13 @@ class SpaceEdit final : public CEditSession {
     wchar_t buffer[32]{};
     LONG shift = 0;
     ULONG length = 0;
-    if (FAILED(range->ShiftStart(edit, -static_cast<LONG>(ARRAYSIZE(buffer)), &shift, nullptr)) ||
-        FAILED(range->GetText(edit, 0, buffer, ARRAYSIZE(buffer), &length)))
+    result = range->ShiftStart(edit, -static_cast<LONG>(ARRAYSIZE(buffer)), &shift, nullptr);
+    Trace("extend range to left", result, shift);
+    if (FAILED(result))
+      return false;
+    result = range->GetText(edit, 0, buffer, ARRAYSIZE(buffer), &length);
+    Trace("read range", result, length);
+    if (FAILED(result))
       return false;
     ULONG start = length;
     while (start && IsLetter(buffer[start - 1]))
@@ -128,8 +142,10 @@ class SpaceEdit final : public CEditSession {
       if (FAILED(range->Collapse(edit, TF_ANCHOR_END)) ||
           FAILED(range->ShiftStart(edit, -wordLength, &shift, nullptr)) || shift != -wordLength)
         return false;
-      if (FAILED(range->SetText(edit, TF_ST_CORRECTION, replacement.c_str(),
-                                static_cast<LONG>(replacement.size()))))
+      result = range->SetText(edit, TF_ST_CORRECTION, replacement.c_str(),
+                              static_cast<LONG>(replacement.size()));
+      Trace("replace word", result);
+      if (FAILED(result))
         return false;
 
       if (SUCCEEDED(range->Collapse(edit, TF_ANCHOR_END))) {
@@ -156,8 +172,9 @@ inline bool HandleSpace(WeaselTSF* service, ITfContext* context, TfClientId id) 
   com_ptr<ITfEditSession> edit;
   edit.Attach(new SpaceEdit(service, context));
   HRESULT result = S_FALSE;
-  return SUCCEEDED(context->RequestEditSession(id, edit, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, &result)) &&
-         (result == S_OK || result == TF_S_ASYNC);
+  const HRESULT request = context->RequestEditSession(id, edit, TF_ES_SYNC | TF_ES_READWRITE, &result);
+  Trace("request edit", request, result);
+  return SUCCEEDED(request) && result == S_OK;
 }
 
 }  // namespace link_english
