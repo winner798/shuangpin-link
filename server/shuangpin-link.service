@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 -B /opt/shuangpin-link/relay.py --db /var/lib/shuangpin-link/relay.sqlite --setup-hash-file %d/setup-hash
+ExecStart=/usr/bin/python3 -B /opt/shuangpin-link/relay.py --db /var/lib/shuangpin-link/relay.sqlite
 LoadCredential=setup-hash:/etc/shuangpin-link/setup.sha256
 DynamicUser=yes
 StateDirectory=shuangpin-link

@@ -341,9 +341,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=18765)
     parser.add_argument("--db", type=Path, required=True)
-    parser.add_argument("--setup-hash-file", type=Path, required=True)
+    credentials = os.environ.get("CREDENTIALS_DIRECTORY")
+    default_hash = Path(credentials) / "setup-hash" if credentials else None
+    parser.add_argument("--setup-hash-file", type=Path, default=default_hash)
     args = parser.parse_args()
     os.umask(0o077)
+    if args.setup_hash_file is None:
+        parser.error("--setup-hash-file is required outside systemd")
     setup_hash = args.setup_hash_file.read_text(encoding="ascii").strip()
     if not re.fullmatch(r"[a-f0-9]{64}", setup_hash):
         parser.error("setup hash must be a SHA-256 hex digest")
