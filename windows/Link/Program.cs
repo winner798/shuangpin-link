@@ -33,9 +33,9 @@ internal sealed partial class LinkWindow : Form
     readonly PictureBox qr = new() { Size = new Size(204, 204), SizeMode = PictureBoxSizeMode.Zoom, TabStop = false };
     readonly Label status = new() { AutoSize = true };
     readonly Label connectionStatus = new() { AutoSize = true, Text = "尚未绑定服务器" };
-    readonly CheckBox pause = new() { AutoSize = true, Text = "暂停剪贴板同步" };
-    readonly CheckBox share = new() { AutoSize = true, Text = "共享个人词库", Checked = true };
-    readonly CheckBox learning = new() { AutoSize = true, Text = "学习选词习惯", Checked = true };
+    readonly CheckBox pause = new GlassCheckBox { AutoSize = true, Text = "暂停剪贴板同步" };
+    readonly CheckBox share = new GlassCheckBox { AutoSize = true, Text = "共享个人词库", Checked = true };
+    readonly CheckBox learning = new GlassCheckBox { AutoSize = true, Text = "学习选词习惯", Checked = true };
     readonly GlassButton checkUpdate = new() { Text = "检查更新" };
     readonly GlassButton cancelUpdate = new() { Text = "取消更新", Visible = false };
     readonly Label updateStatus = new() { AutoSize = true, Text = $"当前版本 {WindowsUpdate.Current.VersionName}" };

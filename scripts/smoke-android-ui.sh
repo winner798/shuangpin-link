@@ -89,6 +89,8 @@ timeout 180 bash -c 'until [[ $(adb shell getprop sys.boot_completed | tr -d "\r
 adb logcat -c
 adb install "$work/ime.apk"
 adb install "$work/editor.apk"
+adb shell wm size 1080x2340
+adb shell cmd uimode night no
 adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "$package"
 adb shell settings put secure show_ime_with_hard_keyboard 1
 adb shell ime enable "$ime"
@@ -103,13 +105,37 @@ done'; then
     exit 1
 fi
 test "$(adb shell settings get secure default_input_method | tr -d '\r')" = "$ime"
-sleep 8
 adb exec-out screencap -p > "$output/android-keyboard.png"
 adb shell pidof "$package"
-adb shell input keyevent KEYCODE_N KEYCODE_I KEYCODE_H KEYCODE_K
+# On a fresh install the keyboard can be visible while librime is still building its dictionary.
+timeout 180 bash -c 'until adb logcat -d -s rime.trime:I | grep -E "finished updating schemas: [1-9][0-9]* success, 0 failure" >/dev/null; do sleep 3; done'
+sleep 2
+adb exec-out screencap -p > "$output/android-keyboard.png"
+adb shell 'input tap 746 1953; input tap 800 1635; input tap 585 1794; input tap 795 1794'
 sleep 2
 adb exec-out screencap -p > "$output/android-candidates.png"
-adb shell input keyevent KEYCODE_SPACE
+adb shell input tap 573 2115
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor.xml"
-grep -F 'text="你好' "$output/android-editor.xml" >/dev/null
+grep -F 'text="你好"' "$output/android-editor.xml" >/dev/null
+
+adb shell input tap 134 1488
+adb shell uiautomator dump /sdcard/shuangpin-schemes.xml
+adb exec-out cat /sdcard/shuangpin-schemes.xml > "$output/android-schemes.xml"
+read -r scheme_x scheme_y < <(python3 - "$output/android-schemes.xml" <<'PY'
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+rows = ET.parse(sys.argv[1]).findall('.//node[@checkable="true"]')
+assert [row.get("text") for row in rows] == ["微软双拼", "普通拼音"]
+left, top, right, bottom = map(int, re.findall(r"\d+", rows[1].get("bounds")))
+print((left + right) // 2, (top + bottom) // 2)
+PY
+)
+adb shell input tap "$scheme_x" "$scheme_y"
+sleep 1
+adb shell 'input tap 746 1953; input tap 800 1635; input tap 585 1794; input tap 69 1794; input tap 900 1635; input tap 573 2115'
+adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
+adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-full-pinyin.xml"
+grep -F 'text="你好你好"' "$output/android-editor-full-pinyin.xml" >/dev/null

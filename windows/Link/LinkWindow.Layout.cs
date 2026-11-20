@@ -153,6 +153,7 @@ internal sealed partial class LinkWindow
         stack.Dock = DockStyle.Top;
         stack.Margin = Padding.Empty;
         stack.GrowStyle = TableLayoutPanelGrowStyle.AddRows;
+        if (!Glass.Contrast) stack.BackColor = Color.Transparent;
         stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         return stack;
     }
@@ -179,6 +180,7 @@ internal sealed partial class LinkWindow
     static FlowLayoutPanel Actions(params Control[] controls)
     {
         var row = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = Padding.Empty, Padding = Padding.Empty };
+        if (!Glass.Contrast) row.BackColor = Color.Transparent;
         row.Controls.AddRange(controls);
         return row;
     }
@@ -188,14 +190,19 @@ internal sealed partial class LinkWindow
     static Label Heading(string text, float size) => new()
     {
         Text = text, ForeColor = Glass.Ink, Font = new Font("Microsoft YaHei UI", size, FontStyle.Bold), AutoSize = true,
-        Margin = Padding.Empty, UseMnemonic = false
+        Margin = Padding.Empty, UseMnemonic = false, BackColor = Glass.Contrast ? SystemColors.Window : Color.Transparent
     };
 
-    static Label Copy(string text) => new() { Text = text, ForeColor = Glass.Muted, AutoSize = true, Margin = Padding.Empty, UseMnemonic = false };
+    static Label Copy(string text) => new()
+    {
+        Text = text, ForeColor = Glass.Muted, AutoSize = true, Margin = Padding.Empty, UseMnemonic = false,
+        BackColor = Glass.Contrast ? SystemColors.Window : Color.Transparent
+    };
 
     static void StyleCheck(CheckBox field)
     {
         field.ForeColor = Glass.Ink;
+        if (!Glass.Contrast) field.BackColor = Color.Transparent;
         field.MinimumSize = new Size(0, 28);
         field.UseMnemonic = false;
     }

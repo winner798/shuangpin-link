@@ -83,6 +83,34 @@ internal static class Glass
         }
     }
 
+    internal static void PaintCheckBox(CheckBox button, Graphics graphics, bool focused)
+    {
+        float size = Dp(button, 15);
+        var box = new RectangleF(1.5f, (button.Height - size) / 2, size, size);
+        Color fill = button.Checked && button.Enabled ? Rgb(0xB8A4FF) : Field;
+        PaintShape(graphics, box, Dp(button, 4), fill, fill, button.Checked ? AccentText : Border);
+        if (button.Checked)
+        {
+            using var check = new Pen(button.Enabled ? Rgb(0x2F214A) : Muted, Dp(button, 1.6f))
+                { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+            var smoothing = graphics.SmoothingMode;
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            graphics.DrawLines(check, [new PointF(box.X + size * .23f, box.Y + size * .51f),
+                new PointF(box.X + size * .43f, box.Y + size * .70f), new PointF(box.X + size * .77f, box.Y + size * .32f)]);
+            graphics.SmoothingMode = smoothing;
+        }
+        int labelLeft = (int)(box.Right + Dp(button, 8));
+        var label = Rectangle.FromLTRB(labelLeft, 1, button.Width, button.Height - 1);
+        TextRenderer.DrawText(graphics, button.Text, button.Font, label, button.Enabled ? Ink : Muted,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        if (focused)
+        {
+            int measured = TextRenderer.MeasureText(button.Text, button.Font).Width;
+            label.Width = Math.Min(label.Width, measured);
+            ControlPaint.DrawFocusRectangle(graphics, label, Ink, Field);
+        }
+    }
+
     static RectangleF Inside(Control control) => new(.5f, .5f, control.Width - 1f, control.Height - 1f);
 
     static void PaintShape(Graphics graphics, RectangleF bounds, float radius, Color start, Color end, Color stroke)
@@ -186,5 +214,14 @@ internal sealed class GlassTab : RadioButton
     {
         if (Glass.Contrast) base.OnPaint(e);
         else Glass.PaintButton(this, e.Graphics, Checked, Focused && ShowFocusCues);
+    }
+}
+
+internal sealed class GlassCheckBox : CheckBox
+{
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        if (Glass.Contrast) base.OnPaint(e);
+        else Glass.PaintCheckBox(this, e.Graphics, Focused && ShowFocusCues);
     }
 }
