@@ -45,9 +45,9 @@ jobs:
           packages: 'platform-tools platforms;android-37.0 build-tools;37.0.0'
       - run: python -B scripts/prepare.py android
       - working-directory: .build/trime
-        run: ./gradlew --no-daemon :app:assembleDebug
+        run: ./gradlew --no-daemon :app:assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: Android-debug-apks
-          path: .build/trime/app/build/outputs/apk/debug/*.apk
+          name: Android-unsigned-apks
+          path: .build/trime/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
