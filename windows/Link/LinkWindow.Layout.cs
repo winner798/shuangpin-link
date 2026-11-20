@@ -2,22 +2,13 @@ namespace ShuangpinLink;
 
 internal sealed partial class LinkWindow
 {
-    static readonly Color Surface = AccessibleColor(0xF3F6F8, SystemColors.Control);
-    static readonly Color Paper = AccessibleColor(0xFFFFFF, SystemColors.Window);
-    static readonly Color Ink = AccessibleColor(0x17232B, SystemColors.WindowText);
-    static readonly Color Muted = AccessibleColor(0x586A75, SystemColors.WindowText);
-    static readonly Color Accent = AccessibleColor(0x007F78, SystemColors.Highlight);
-    static readonly Color Border = AccessibleColor(0xD6E1E6, SystemColors.WindowText);
-    static readonly Color Mint = AccessibleColor(0xE1F3F0, SystemColors.Window);
-    static readonly Color OnAccent = AccessibleColor(0xFFFFFF, SystemColors.HighlightText);
-
-    readonly Panel inputPage = new();
-    readonly Panel interopPage = new();
-    readonly Panel updatesPage = new();
+    readonly Panel inputPage = new GlassPage();
+    readonly Panel interopPage = new GlassPage();
+    readonly Panel updatesPage = new GlassPage();
     readonly TableLayoutPanel qrBox = Stack();
-    readonly RadioButton inputTab = new() { Text = "输入" };
-    readonly RadioButton interopTab = new() { Text = "设备互通" };
-    readonly RadioButton updatesTab = new() { Text = "更新" };
+    readonly RadioButton inputTab = new GlassTab { Text = "输入" };
+    readonly RadioButton interopTab = new GlassTab { Text = "设备互通" };
+    readonly RadioButton updatesTab = new GlassTab { Text = "更新" };
 
     void BuildLayout()
     {
@@ -30,8 +21,9 @@ internal sealed partial class LinkWindow
         MinimumSize = new Size(460, 420);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Microsoft YaHei UI", 10.5F);
-        BackColor = Surface;
-        ForeColor = Ink;
+        BackColor = Glass.Surface;
+        ForeColor = Glass.Ink;
+        HandleCreated += (_, _) => Glass.ApplyCaption(Handle);
         Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         tray.Icon = Icon;
 
@@ -41,7 +33,7 @@ internal sealed partial class LinkWindow
         shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         shell.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        var header = new Panel { Dock = DockStyle.Fill, BackColor = Paper, Padding = new Padding(24, 10, 24, 12), Margin = Padding.Empty };
+        var header = new GlassPage(header: true) { Dock = DockStyle.Fill, BackColor = Glass.Surface, Padding = new Padding(24, 10, 24, 12), Margin = Padding.Empty };
         var brand = Heading("双拼互联", 20);
         brand.AutoSize = false;
         brand.Dock = DockStyle.Top;
@@ -53,16 +45,15 @@ internal sealed partial class LinkWindow
         header.Controls.Add(brand);
         shell.Controls.Add(header, 0, 0);
 
-        var host = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Surface };
+        var host = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Glass.Surface };
         host.Controls.AddRange([inputPage, interopPage, updatesPage]);
         shell.Controls.Add(host, 0, 1);
 
-        var feedback = Stack();
+        var feedback = Stack(new GlassCard());
         feedback.Dock = DockStyle.Fill;
-        feedback.BackColor = Mint;
         feedback.Padding = new Padding(12, 7, 12, 7);
         feedback.Margin = new Padding(24, 0, 24, 10);
-        status.ForeColor = Ink;
+        status.ForeColor = Glass.Ink;
         status.AccessibleName = "操作结果";
         status.AccessibleRole = AccessibleRole.StaticText;
         AddRow(feedback, status);
@@ -86,20 +77,20 @@ internal sealed partial class LinkWindow
             Card("输入方案", modes, Copy("按 Win + 空格选「小狼毫」。打字时按 Ctrl + `，再从候选窗切换方案。"), Copy("试打"), Input(trial, "试打输入框")),
             Card("个人词库", learning, share, Actions(ActionButton("立即同步词库", SyncNow), ActionButton("清空本机词库", ClearDictionary))));
 
-        qrBox.BackColor = Paper;
+        qrBox.BackColor = Glass.Contrast ? SystemColors.Window : Color.Transparent;
         qrBox.AccessibleName = "手机配对码";
         qr.AccessibleName = "手机扫码用的配对二维码";
         AddRow(qrBox, qr);
         AddRow(qrBox, Copy("在安卓的互联设置中扫码。配对码 5 分钟内有效。"), top: 6);
         qrBox.Visible = false;
-        connectionStatus.ForeColor = Accent;
+        connectionStatus.ForeColor = Glass.AccentText;
         AddCards(interopPage,
             Card("连接服务器", connectionStatus, Copy("服务器地址"), Input(server, "服务器地址"),
                 Copy("服务器启用码"), Input(setupCode, "服务器启用码"), Actions(ActionButton("启用或恢复", Connect, primary: true))),
             Card("手机配对", Actions(ActionButton("显示配对码", Invite, primary: true), ActionButton("解除手机配对", ResetPeer)), qrBox),
             Card("剪贴板", pause));
 
-        updateStatus.ForeColor = Muted;
+        updateStatus.ForeColor = Glass.Muted;
         StyleButton(checkUpdate, primary: true);
         StyleButton(cancelUpdate, primary: false);
         AddCards(updatesPage, Card("软件更新", updateStatus, Actions(checkUpdate, cancelUpdate)));
@@ -122,20 +113,12 @@ internal sealed partial class LinkWindow
         tab.Margin = new Padding(0, 0, 8, 0);
         tab.Padding = new Padding(10, 3, 10, 3);
         tab.FlatStyle = FlatStyle.Flat;
-        tab.UseVisualStyleBackColor = false;
-        tab.FlatAppearance.BorderSize = 1;
-        tab.FlatAppearance.BorderColor = Border;
-        tab.FlatAppearance.CheckedBackColor = Accent;
-        tab.FlatAppearance.MouseOverBackColor = Mint;
-        tab.FlatAppearance.MouseDownBackColor = Mint;
-        tab.BackColor = Paper;
-        tab.ForeColor = Ink;
+        tab.UseVisualStyleBackColor = Glass.Contrast;
+        tab.BackColor = Glass.Contrast ? SystemColors.Control : Color.Transparent;
+        tab.ForeColor = Glass.Contrast ? SystemColors.ControlText : Glass.Ink;
         tab.CheckedChanged += (_, _) =>
         {
-            tab.ForeColor = tab.Checked ? OnAccent : Ink;
-            tab.FlatAppearance.BorderColor = tab.Checked ? Accent : Border;
-            tab.FlatAppearance.MouseOverBackColor = tab.Checked ? Accent : Mint;
-            tab.FlatAppearance.MouseDownBackColor = tab.Checked ? Accent : Mint;
+            tab.Invalidate();
             page.Visible = tab.Checked;
             if (tab.Checked) page.BringToFront();
         };
@@ -144,7 +127,7 @@ internal sealed partial class LinkWindow
     static void AddCards(Panel page, params Control[] cards)
     {
         page.Dock = DockStyle.Fill;
-        page.BackColor = Surface;
+        page.BackColor = Glass.Surface;
         page.AutoScroll = true;
         page.Padding = new Padding(24, 16, 24, 14);
         var column = Stack();
@@ -154,25 +137,22 @@ internal sealed partial class LinkWindow
 
     static TableLayoutPanel Card(string title, params Control[] content)
     {
-        var frame = Stack();
-        frame.BackColor = Border;
-        frame.Padding = new Padding(1);
-        var inner = Stack();
-        inner.BackColor = Paper;
-        inner.Padding = new Padding(16, 13, 16, 13);
-        AddRow(inner, Heading(title, 14));
-        foreach (var control in content) AddRow(inner, control, top: 8);
-        AddRow(frame, inner);
-        return frame;
+        var card = Stack(new GlassCard());
+        card.Padding = new Padding(18, 14, 18, 14);
+        AddRow(card, Heading(title, 14));
+        foreach (var control in content) AddRow(card, control, top: 8);
+        return card;
     }
 
-    static TableLayoutPanel Stack()
+    static TableLayoutPanel Stack(TableLayoutPanel? surface = null)
     {
-        var stack = new TableLayoutPanel
-        {
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, Dock = DockStyle.Top,
-            Margin = Padding.Empty, GrowStyle = TableLayoutPanelGrowStyle.AddRows
-        };
+        var stack = surface ?? new TableLayoutPanel();
+        stack.AutoSize = true;
+        stack.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        stack.ColumnCount = 1;
+        stack.Dock = DockStyle.Top;
+        stack.Margin = Padding.Empty;
+        stack.GrowStyle = TableLayoutPanelGrowStyle.AddRows;
         stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         return stack;
     }
@@ -203,54 +183,35 @@ internal sealed partial class LinkWindow
         return row;
     }
 
-    static Panel Input(TextBox field, string accessibleName)
-    {
-        field.AccessibleName = accessibleName;
-        field.BackColor = Paper;
-        field.ForeColor = Ink;
-        field.BorderStyle = BorderStyle.None;
-        field.Dock = DockStyle.Top;
-        var outline = new Panel { BackColor = Border, Padding = new Padding(1), Height = 36 };
-        var inside = new Panel { BackColor = Paper, Padding = new Padding(9, 7, 9, 6), Dock = DockStyle.Fill };
-        inside.Controls.Add(field);
-        outline.Controls.Add(inside);
-        field.Enter += (_, _) => outline.BackColor = Accent;
-        field.Leave += (_, _) => outline.BackColor = Border;
-        return outline;
-    }
+    static Panel Input(TextBox field, string accessibleName) => new GlassField(field, accessibleName);
 
     static Label Heading(string text, float size) => new()
     {
-        Text = text, ForeColor = Ink, Font = new Font("Microsoft YaHei UI", size, FontStyle.Bold), AutoSize = true,
+        Text = text, ForeColor = Glass.Ink, Font = new Font("Microsoft YaHei UI", size, FontStyle.Bold), AutoSize = true,
         Margin = Padding.Empty, UseMnemonic = false
     };
 
-    static Label Copy(string text) => new() { Text = text, ForeColor = Muted, AutoSize = true, Margin = Padding.Empty, UseMnemonic = false };
+    static Label Copy(string text) => new() { Text = text, ForeColor = Glass.Muted, AutoSize = true, Margin = Padding.Empty, UseMnemonic = false };
 
     static void StyleCheck(CheckBox field)
     {
-        field.ForeColor = Ink;
+        field.ForeColor = Glass.Ink;
         field.MinimumSize = new Size(0, 28);
         field.UseMnemonic = false;
     }
 
-    static void StyleButton(Button button, bool primary)
+    static void StyleButton(GlassButton button, bool primary)
     {
         button.AutoSize = true;
         button.MinimumSize = new Size(85, 34);
         button.Margin = new Padding(0, 0, 8, 3);
         button.Padding = new Padding(10, 3, 10, 3);
-        button.UseVisualStyleBackColor = false;
+        button.UseVisualStyleBackColor = Glass.Contrast;
         button.FlatStyle = FlatStyle.Flat;
-        button.FlatAppearance.BorderSize = 1;
-        button.FlatAppearance.BorderColor = primary ? Accent : Border;
-        button.FlatAppearance.MouseOverBackColor = primary ? AccessibleColor(0x00635D, SystemColors.Highlight) : Mint;
-        button.FlatAppearance.MouseDownBackColor = button.FlatAppearance.MouseOverBackColor;
-        button.BackColor = primary ? Accent : Paper;
-        button.ForeColor = primary ? OnAccent : Ink;
+        button.Primary = primary;
+        button.BackColor = Glass.Contrast ? SystemColors.Control : Color.Transparent;
+        button.ForeColor = Glass.Contrast ? SystemColors.ControlText : Glass.Ink;
         button.UseMnemonic = false;
     }
 
-    static Color AccessibleColor(int rgb, Color fallback) => SystemInformation.HighContrast
-        ? fallback : Color.FromArgb(unchecked((int)0xFF000000) | rgb);
 }

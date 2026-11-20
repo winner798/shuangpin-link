@@ -7,7 +7,6 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.content.res.Configuration
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
@@ -67,19 +66,47 @@ class LinkActivity : ComponentActivity() {
     private var bindingPreferences = false
 
     private data class Palette(
-        val surface: Int, val panel: Int, val text: Int, val muted: Int, val accent: Int,
-        val onAccent: Int, val outline: Int, val disabled: Int,
-    )
+        val surface: Int,
+        val surfaceHighlight: Int,
+        val panel: Int,
+        val panelHighlight: Int,
+        val text: Int,
+        val muted: Int,
+        val accentText: Int,
+        val outline: Int,
+        val disabled: Int,
+    ) {
+        val accent = 0xFFB8A4FF.toInt()
+        val onAccent = 0xFF201B32.toInt()
+    }
 
     private val dark get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
     private val colors by lazy {
         if (dark) {
-            Palette(0xFF172127.toInt(), 0xFF202C33.toInt(), 0xFFF1F6F7.toInt(), 0xFFA4B6BF.toInt(),
-                0xFF83DFC8.toInt(), 0xFF112420.toInt(), 0xFF394952.toInt(), 0xFF647780.toInt())
+            Palette(
+                surface = 0xFF11121E.toInt(),
+                surfaceHighlight = 0xFF262136.toInt(),
+                panel = 0xE6232033.toInt(),
+                panelHighlight = 0xED322B49.toInt(),
+                text = 0xFFF6F1FF.toInt(),
+                muted = 0xFFB8B2CB.toInt(),
+                accentText = 0xFFD8CCFF.toInt(),
+                outline = 0xFF49405F.toInt(),
+                disabled = 0xFF9287A7.toInt(),
+            )
         } else {
-            Palette(0xFFF3F6F8.toInt(), Color.WHITE, 0xFF17232B.toInt(), 0xFF586A75.toInt(),
-                0xFF007F78.toInt(), Color.WHITE, 0xFFD6E1E6.toInt(), 0xFF7D8B93.toInt())
+            Palette(
+                surface = 0xFFF4F1FB.toInt(),
+                surfaceHighlight = 0xFFFFFCFF.toInt(),
+                panel = 0xD9F8F4FF.toInt(),
+                panelHighlight = 0xF2FFFFFF.toInt(),
+                text = 0xFF201B32.toInt(),
+                muted = 0xFF645C77.toInt(),
+                accentText = 0xFF58418F.toInt(),
+                outline = 0xFFDFD6EE.toInt(),
+                disabled = 0xFF796F8B.toInt(),
+            )
         }
     }
 
@@ -170,15 +197,15 @@ class LinkActivity : ComponentActivity() {
         val wideWidth = if (resources.configuration.screenWidthDp >= 640) dp(584) else MATCH_PARENT
         wrap.addView(pane, FrameLayout.LayoutParams(wideWidth, WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
         val scroll = ScrollView(this).apply {
-            setBackgroundColor(colors.surface)
+            background = rounded(colors.surface, 0, highlight = colors.surfaceHighlight)
             clipToPadding = false
             isFillViewport = true
             addView(wrap)
         }
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            view.updatePadding(left = bars.left + dp(17), top = bars.top + dp(14),
-                right = bars.right + dp(17), bottom = bars.bottom + dp(10))
+            view.updatePadding(left = bars.left + dp(20), top = bars.top + dp(16),
+                right = bars.right + dp(20), bottom = bars.bottom + dp(16))
             insets
         }
         setContentView(scroll)
@@ -232,10 +259,15 @@ class LinkActivity : ComponentActivity() {
         topMargin = dp(top)
     }
 
-    private fun rounded(fill: Int, radius: Int, stroke: Int? = null) = GradientDrawable().apply {
-        setColor(fill)
-        cornerRadius = dp(radius).toFloat()
-        stroke?.let { setStroke(dp(1), it) }
+    private fun rounded(fill: Int, radius: Int, stroke: Int? = null, highlight: Int? = null): GradientDrawable {
+        val shape = if (highlight != null) {
+            GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(highlight, fill))
+        } else {
+            GradientDrawable().apply { setColor(fill) }
+        }
+        shape.cornerRadius = dp(radius).toFloat()
+        stroke?.let { shape.setStroke(dp(1), it) }
+        return shape
     }
 
     private fun section(pane: LinearLayout, title: String, content: LinearLayout.() -> Unit) {
@@ -243,7 +275,7 @@ class LinkActivity : ComponentActivity() {
             orientation = LinearLayout.VERTICAL
             val padding = dp(16)
             setPadding(padding, padding, padding, padding)
-            background = rounded(colors.panel, 18, colors.outline)
+            background = rounded(colors.panel, 22, colors.outline, colors.panelHighlight)
             addView(TextView(this@LinkActivity).apply {
                 text = title
                 textSize = 18f
@@ -278,11 +310,12 @@ class LinkActivity : ComponentActivity() {
         minHeight = dp(48)
         stateListAnimator = null
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        val textColor = if (primary) colors.onAccent else colors.accent
+        val textColor = if (primary) colors.onAccent else colors.accentText
         setTextColor(ColorStateList(arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
             intArrayOf(colors.disabled, textColor)))
-        background = RippleDrawable(ColorStateList.valueOf(0x25007F78),
-            if (primary) rounded(colors.accent, 11) else rounded(colors.panel, 11, colors.outline), null)
+        val ripple = (textColor and 0xFFFFFF) or 0x24000000
+        background = RippleDrawable(ColorStateList.valueOf(ripple),
+            if (primary) rounded(colors.accent, 16) else rounded(colors.panel, 16, colors.outline), null)
         backgroundTintList = null
         setPadding(dp(12), dp(6), dp(12), dp(6))
         setOnClickListener { action() }

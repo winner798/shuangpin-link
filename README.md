@@ -22,5 +22,6 @@ Windows 托盘和 Android 的双拼互联设置都可点「检查更新」。两
 - `windows/` 包含托盘程序和安装程序源码。
 - `server/` 包含 Ubuntu 上的 Python/SQLite 中继。`tests/` 包含协议集成测试。
 - `updates/` 包含当前版本和客户端用来校验更新的公钥。
+- [视觉规范](design/appearance.md) 记录两端的液态玻璃配色、圆角、材质与按压反馈。
 - 维护手册请看 [后期调试说明](docs/后期调试说明.md)。依赖出处请看 [开源说明](THIRD_PARTY.md)。
 

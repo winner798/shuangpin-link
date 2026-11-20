@@ -1,4 +1,4 @@
-config_version: "1"
+config_version: "2"
 name: 双拼互联
 
 style:
@@ -6,14 +6,14 @@ style:
   candidate_padding: 12
   candidate_spacing: 0
   candidate_view_height: 36
-  candidate_corner_radius: 12
+  candidate_corner_radius: 11
   comment_height: 12
   comment_position: right
   comment_text_size: 10
-  horizontal_gap: 4
+  horizontal_gap: 5
   vertical_gap: 6
-  keyboard_padding: 6
-  keyboard_padding_bottom: 5
+  keyboard_padding: 8
+  keyboard_padding_bottom: 6
   keyboard_padding_land: 44
   keyboard_padding_land_bottom: 4
   keyboard_height: 232
@@ -52,78 +52,82 @@ preset_color_schemes:
     name: 浅色
     dark_scheme: night
     light_scheme: default
-    root_background: 0xF3F6F8
-    back_color: 0xFFFFFF
-    border_color: 0xD6E1E6
-    candidate_background: 0xFFFFFF
-    candidate_border_color: 0xD6E1E6
-    candidate_text_color: 0x17232B
-    comment_text_color: 0x586A75
-    hilited_candidate_back_color: 0xDAEFEB
-    hilited_candidate_text_color: 0x005B55
-    hilited_comment_text_color: 0x386B65
-    hilited_candidate_button_color: 0xDAEFEB
-    keyboard_back_color: 0xF3F6F8
-    key_back_color: 0xFFFFFF
-    key_border_color: 0xD6E1E6
-    key_text_color: 0x17232B
-    key_symbol_color: 0x586A75
-    hilited_key_back_color: 0xDAEFEB
-    hilited_key_text_color: 0x005B55
-    text_color: 0x17232B
-    text_back_color: 0xFFFFFF
-    liquid_keyboard_background: 0xF3F6F8
-    action_back: 0xE5EBEE
-    emphasis_back: 0x007F78
-    emphasis_text: 0xFFFFFF
-    mode_back: 0xE4F2EF
-    mode_text: 0x005B55
+    root_background: 0xF4F1FB
+    back_color: 0xFAF7FF
+    border_color: 0xDFD6EE
+    candidate_background: 0xA6FFFCFF
+    candidate_border_color: 0xDFD6EE
+    candidate_text_color: 0x201B32
+    comment_text_color: 0x645C77
+    hilited_candidate_back_color: 0xE7DEFF
+    hilited_candidate_text_color: 0x38265F
+    hilited_comment_text_color: 0x58418F
+    hilited_candidate_button_color: 0xD9CBFA
+    keyboard_back_color: 0xF4F1FB
+    glass_highlight: 0xFFFCFF
+    glass_shade: 0xEBE4F8
+    key_back_color: 0xD9FFFFFF
+    key_border_color: 0xDFD6EE
+    key_text_color: 0x201B32
+    key_symbol_color: 0x645C77
+    hilited_key_back_color: 0xD9CBFA
+    hilited_key_text_color: 0x201B32
+    text_color: 0x201B32
+    text_back_color: 0xF9F5FF
+    liquid_keyboard_background: 0xF4F1FB
+    action_back: 0xE8E1F3
+    emphasis_back: 0xB8A4FF
+    emphasis_text: 0x201B32
+    mode_back: 0xE7DEFF
+    mode_text: 0x58418F
   night:
     name: 深色
     dark_scheme: night
     light_scheme: default
-    root_background: 0x172127
-    back_color: 0x202C33
-    border_color: 0x394952
-    candidate_background: 0x202C33
-    candidate_border_color: 0x394952
-    candidate_text_color: 0xF1F6F7
-    comment_text_color: 0xA4B6BF
-    hilited_candidate_back_color: 0x234840
-    hilited_candidate_text_color: 0xA1F4DE
-    hilited_comment_text_color: 0x9BCBC0
-    hilited_candidate_button_color: 0x234840
-    keyboard_back_color: 0x172127
-    key_back_color: 0x29363E
-    key_border_color: 0x394952
-    key_text_color: 0xF1F6F7
-    key_symbol_color: 0xA4B6BF
-    hilited_key_back_color: 0x234840
-    hilited_key_text_color: 0xA1F4DE
-    text_color: 0xF1F6F7
-    text_back_color: 0x202C33
-    liquid_keyboard_background: 0x172127
-    action_back: 0x34454E
-    emphasis_back: 0x83DFC8
-    emphasis_text: 0x112420
-    mode_back: 0x234840
-    mode_text: 0xA1F4DE
+    root_background: 0x11121E
+    back_color: 0x222036
+    border_color: 0x413A56
+    candidate_background: 0xA629253A
+    candidate_border_color: 0x413A56
+    candidate_text_color: 0xF6F1FF
+    comment_text_color: 0xB8B2CB
+    hilited_candidate_back_color: 0x35304F
+    hilited_candidate_text_color: 0xF6F1FF
+    hilited_comment_text_color: 0xD8CCFF
+    hilited_candidate_button_color: 0x50466D
+    keyboard_back_color: 0x11121E
+    glass_highlight: 0x262136
+    glass_shade: 0x161522
+    key_back_color: 0xDA322E45
+    key_border_color: 0x47405B
+    key_text_color: 0xF6F1FF
+    key_symbol_color: 0xB8B2CB
+    hilited_key_back_color: 0x51466F
+    hilited_key_text_color: 0xF6F1FF
+    text_color: 0xF6F1FF
+    text_back_color: 0x242138
+    liquid_keyboard_background: 0x11121E
+    action_back: 0x39334E
+    emphasis_back: 0xB8A4FF
+    emphasis_text: 0x201B32
+    mode_back: 0x35304F
+    mode_text: 0xD8CCFF
 
 tool_bar:
   button_spacing: 4
   primary_button:
     action: Scheme_menu
-    size: [86, 44]
-    background: {normal: mode_back, highlight: hilited_candidate_back_color, corner_radius: 10, horizontal_inset: 5, vertical_inset: 5}
+    size: [86, 48]
+    background: {normal: mode_back, highlight: hilited_candidate_button_color, corner_radius: 11, horizontal_inset: 5, vertical_inset: 6}
     foreground: {style: 切换方案, normal: mode_text, font_size: 13, padding: 4}
   buttons:
     - action: Link_settings
-      size: [62, 44]
-      background: {highlight: hilited_candidate_back_color, corner_radius: 9}
+      size: [62, 48]
+      background: {highlight: hilited_candidate_button_color, corner_radius: 10}
       foreground: {style: 设置, font_size: 13}
     - action: Link_clipboard
-      size: [70, 44]
-      background: {highlight: hilited_candidate_back_color, corner_radius: 9}
+      size: [70, 48]
+      background: {highlight: hilited_candidate_button_color, corner_radius: 10}
       foreground: {style: 剪贴板, font_size: 13}
 
 preset_keys:

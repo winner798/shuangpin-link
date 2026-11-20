@@ -14,43 +14,43 @@ patch:
   style/layout/margin_y: 8
   style/layout/candidate_spacing: 12
   style/layout/hilite_spacing: 4
-  style/layout/hilite_padding: 6
-  style/layout/round_corner: 8
-  style/layout/corner_radius: 12
-  style/layout/shadow_radius: 6
+  style/layout/hilite_padding: 7
+  style/layout/round_corner: 11
+  style/layout/corner_radius: 16
+  style/layout/shadow_radius: 4
   style/layout/shadow_offset_x: 0
   style/layout/shadow_offset_y: 2
   style/color_scheme: shuangpin_link
   style/color_scheme_dark: shuangpin_link_dark
-  # 小狼毫颜色使用 BGR 顺序，四字节颜色的最高位是透明度。
+  # 小狼毫用 BGR 表示颜色。窗口底色保持不透明，只在轮廓外绘制淡阴影。
   preset_color_schemes/shuangpin_link:
-    name: 双拼互联亮色
-    back_color: 0xffffff
-    border_color: 0xe6e1d6
-    shadow_color: 0x262b2317
-    text_color: 0x2b2317
-    hilited_text_color: 0x515607
-    hilited_back_color: 0xf0f3e1
-    candidate_text_color: 0x2b2317
-    comment_text_color: 0x756a58
-    label_color: 0x756a58
-    hilited_candidate_back_color: 0xf0f3e1
-    hilited_candidate_text_color: 0x515607
-    hilited_comment_text_color: 0x687044
-    hilited_candidate_label_color: 0x787f00
+    name: 双拼互联 浅紫
+    back_color: 0xfbf1f4
+    border_color: 0xf2d4df
+    shadow_color: 0x21443a5c
+    text_color: 0x321b20
+    hilited_text_color: 0x5e2d43
+    hilited_back_color: 0xffdee7
+    candidate_text_color: 0x321b20
+    comment_text_color: 0x775c64
+    label_color: 0x775c64
+    hilited_candidate_back_color: 0xffdee7
+    hilited_candidate_text_color: 0x5e2d43
+    hilited_comment_text_color: 0x795967
+    hilited_candidate_label_color: 0x936049
   preset_color_schemes/shuangpin_link_dark:
-    name: 双拼互联暗色
-    back_color: 0x282218
-    border_color: 0x504636
-    shadow_color: 0x5a000000
-    text_color: 0xf0eeea
-    hilited_text_color: 0xcee479
-    hilited_back_color: 0x3b3e19
-    candidate_text_color: 0xf0eeea
-    comment_text_color: 0xbeb3a2
-    label_color: 0xbeb3a2
-    hilited_candidate_back_color: 0x3b3e19
-    hilited_candidate_text_color: 0xcee479
-    hilited_comment_text_color: 0xb4ca8f
-    hilited_candidate_label_color: 0xcee479
+    name: 双拼互联 深紫
+    back_color: 0x1e1211
+    border_color: 0x664450
+    shadow_color: 0x46000000
+    text_color: 0xfff1f6
+    hilited_text_color: 0xffe7f4
+    hilited_back_color: 0x4f3035
+    candidate_text_color: 0xfff1f6
+    comment_text_color: 0xcbb2b8
+    label_color: 0xcbb2b8
+    hilited_candidate_back_color: 0x4f3035
+    hilited_candidate_text_color: 0xfff1f6
+    hilited_comment_text_color: 0xdfc8d6
+    hilited_candidate_label_color: 0xffa4b8
 

@@ -36,8 +36,8 @@ internal sealed partial class LinkWindow : Form
     readonly CheckBox pause = new() { AutoSize = true, Text = "暂停剪贴板同步" };
     readonly CheckBox share = new() { AutoSize = true, Text = "共享个人词库", Checked = true };
     readonly CheckBox learning = new() { AutoSize = true, Text = "学习选词习惯", Checked = true };
-    readonly Button checkUpdate = new() { Text = "检查更新" };
-    readonly Button cancelUpdate = new() { Text = "取消更新", Visible = false };
+    readonly GlassButton checkUpdate = new() { Text = "检查更新" };
+    readonly GlassButton cancelUpdate = new() { Text = "取消更新", Visible = false };
     readonly Label updateStatus = new() { AutoSize = true, Text = $"当前版本 {WindowsUpdate.Current.VersionName}" };
     readonly NotifyIcon tray = new() { Text = "双拼互联", Icon = SystemIcons.Application, Visible = true };
     readonly System.Windows.Forms.Timer qrExpiry = new() { Interval = 5 * 60 * 1000 };
@@ -126,7 +126,7 @@ internal sealed partial class LinkWindow : Form
 
     Button ActionButton(string label, Func<Task> action, bool primary = false)
     {
-        var button = new Button { Text = label };
+        var button = new GlassButton { Text = label };
         StyleButton(button, primary);
         button.Click += async (_, _) => await RunAction(action);
         return button;

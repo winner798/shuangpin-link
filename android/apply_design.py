@@ -68,6 +68,16 @@ def apply_design(src, assets):
     apply_edit(color_manager, "selectedSchemeId = prefs.normalModeColor.getValue(),", 'selectedSchemeId = "default",')
     apply_edit(color_manager, "followSystemDayNight = prefs.followSystemDayNight.getValue(),", "followSystemDayNight = true,")
 
+    keyboard_view = java / "ime/core/InputView.kt"
+    refresh = """    fun refreshColors() {
+        keyboardBackground.imageDrawable = """
+    after_window = """        windowManager.attachWindow(KeyboardWindow)
+
+        keyboardBackground.imageDrawable = """
+    for location in (refresh, after_window):
+        apply_edit(keyboard_view, location + 'scope.drawable("keyboard_background")',
+                   location + "com.osfans.trime.link.keyboardGlass(scope)")
+
     ime = java / "ime/core/TrimeInputMethodService.kt"
     input_view = "    private var inputView: InputView? = null"
     apply_edit(ime, input_view, input_view + "\n    private var inputViewAwaitingTheme = false")
