@@ -119,11 +119,15 @@ adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor.xml"
 grep -F 'text="你好"' "$output/android-editor.xml" >/dev/null
 
-# Prediction temporarily replaces the toolbar after a commit. Reopen the keyboard to clear it.
-adb shell input keyevent KEYCODE_BACK
-sleep 1
+# Give the second scheme a fresh session while keeping the compiled dictionaries.
+adb shell am force-stop "$package"
+adb shell am force-stop "$preview"
+adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "$package"
+adb shell ime set "$ime"
+adb shell am start -W -n "$preview/.PreviewActivity"
 adb shell input tap 200 300
-sleep 2
+timeout 30 bash -c 'until adb shell dumpsys input_method | grep -F "mInputShown=true" >/dev/null; do sleep 1; done'
+sleep 4
 adb shell input tap 134 1488
 sleep 1
 adb exec-out screencap -p > "$output/android-scheme-picker.png"
@@ -145,4 +149,4 @@ sleep 1
 adb shell 'input tap 746 1953; input tap 800 1635; input tap 585 1794; input tap 69 1794; input tap 900 1635; input tap 573 2115'
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-full-pinyin.xml"
-grep -F 'text="你好你好"' "$output/android-editor-full-pinyin.xml" >/dev/null
+grep -F 'text="你好"' "$output/android-editor-full-pinyin.xml" >/dev/null
