@@ -116,7 +116,7 @@ fs::path WeaselUserDataPath() {
         apply = 'false' if test else 'true'
         replace_pattern(key_events, rf'(?m)^(STDAPI WeaselTSF::{action}\([^{{]+\{{)\n',
             lambda match: match[1] + f'''
-  if (pContext && _status.ascii_mode && !_status.composing && !_fTestKeyDownPending &&
+  if (wParam == VK_SPACE && pContext && _status.ascii_mode && !_status.composing && !_fTestKeyDownPending &&
       !(_isToOpenClose && !_IsKeyboardOpen()) && !_IsKeyboardDisabled() &&
       link_english::HandleSpace(this, pContext, _tfClientId, wParam, lParam, {apply})) {{
     _fTestKeyUpPending = FALSE;

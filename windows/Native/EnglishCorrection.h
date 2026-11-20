@@ -42,8 +42,7 @@ inline bool IsPlainText(ITfContext* context, ITfRange* range, TfEditCookie edit)
     return false;
   bool text = true;
   for (UINT index = 0; index < count; ++index) {
-    if (kinds[index] != IS_DEFAULT && kinds[index] != IS_TEXT &&
-        kinds[index] != IS_EMAIL_SUBJECT && kinds[index] != IS_CHAT)
+    if (kinds[index] != IS_DEFAULT && kinds[index] != IS_TEXT && kinds[index] != IS_CHAT)
       text = false;
   }
   CoTaskMemFree(kinds);
@@ -113,9 +112,10 @@ class SpaceEdit final : public CEditSession {
         replacement[0] -= L'a' - L'A';
       }
       replacement.push_back(L' ');
-      if (FAILED(range->ShiftStart(edit, static_cast<LONG>(start), &shift, nullptr)) ||
-          shift != static_cast<LONG>(start) ||
-          FAILED(range->SetText(edit, 0, replacement.c_str(), static_cast<LONG>(replacement.size()))))
+      if (start && (FAILED(range->ShiftStart(edit, static_cast<LONG>(start), &shift, nullptr)) ||
+                    shift != static_cast<LONG>(start)))
+        return S_FALSE;
+      if (FAILED(range->SetText(edit, 0, replacement.c_str(), static_cast<LONG>(replacement.size()))))
         return S_FALSE;
 
       if (SUCCEEDED(range->Collapse(edit, TF_ANCHOR_END))) {
