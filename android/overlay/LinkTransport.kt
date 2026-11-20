@@ -94,7 +94,7 @@ internal data class LinkDevice(val server: String, val token: String, val key: S
 
 internal class LinkSettings(context: Context) {
     private val app = context.applicationContext
-    val unlocked: Boolean get() = app.getSystemService(UserManager::class.java).isUserUnlocked
+    val unlocked: Boolean get() = app.getSystemService(UserManager::class.java)?.isUserUnlocked == true
     val prefs get() = app.getSharedPreferences("ime_sync", Context.MODE_PRIVATE)
 
     private fun wrappingKey(): SecretKey {

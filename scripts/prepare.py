@@ -156,6 +156,22 @@ def prepare_android():
     change(java / "core/data/UserDataManager.kt", [
         ("          - schema: luna_pinyin_simp", "          - schema: double_pinyin_mspy"),
     ])
+    user_data_manager = java / "core/data/UserDataManager.kt"
+    text = user_data_manager.read_text(encoding="utf-8")
+    user_data_manager.write_text(text.replace("          - schema: luna_pinyin\n", "", 1), encoding="utf-8")
+    keyboard = assets / "trime.yaml"
+    text = keyboard.read_text(encoding="utf-8")
+    qwerty = re.search(r"(?ms)^  qwerty:\n.*?(?=^  \w+:)", text)
+    if not qwerty:
+        raise RuntimeError("Trime QWERTY layout missing")
+    compact = re.sub(r"(?m)^    - \{width: 5\}\n", "", qwerty[0])
+    compact = compact.replace("  qwerty:", "  default:", 1).replace("預設26鍵", "微软双拼 · 26键", 1)
+    compact = compact.replace("    - {click: 'l', long_click: ';'}\n", "    - {click: 'l'}\n    - {click: ';', long_click: ':'}\n", 1)
+    text, count = re.subn(r"(?ms)(^preset_keyboards:\n)  default:\n.*?(?=^  \w+:)",
+                          lambda match: match[1] + compact, text, count=1)
+    if count != 1:
+        raise RuntimeError("Trime default layout missing")
+    keyboard.write_text(text, encoding="utf-8")
     service = java / "ime/core/TrimeInputMethodService.kt"
     change(service, [
         ("    private lateinit var rime: RimeSession", "    private lateinit var rime: RimeSession\n    private lateinit var clipboardLink: com.osfans.trime.link.ClipboardLink"),
@@ -174,6 +190,14 @@ def prepare_android():
          "                intent = android.content.Intent(ctx, com.osfans.trime.link.LinkActivity::class.java)\n"
          "            })\n"
          "            addCategory(R.string.storage)"),
+    ])
+    change(java / "ime/keyboard/KeyboardWindow.kt", [
+        ("        switchKeyboard(targetKeyboard)\n        val isAsciiMode", 
+         "        val privateField = com.osfans.trime.link.sensitiveEditor(info)\n"
+         '        switchKeyboard(if (privateField) ".ascii" else targetKeyboard)\n'
+         "        val isAsciiMode"),
+        ('        if (targetKeyboard == ".ascii" || targetKeyboard == "number") {',
+         '        if (privateField || targetKeyboard == ".ascii" || targetKeyboard == "number") {'),
     ])
 
 

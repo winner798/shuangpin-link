@@ -40,7 +40,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-      - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-37.0 build-tools;37.0.0'
       - run: python -B scripts/prepare.py android
       - working-directory: .build/trime
         run: ./gradlew --no-daemon :app:assembleDebug

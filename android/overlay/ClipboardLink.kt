@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
-import android.os.PersistableBundle
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
 import com.osfans.trime.core.data.UserDataManager
@@ -40,7 +39,7 @@ internal fun sensitiveEditor(info: EditorInfo?): Boolean {
 
 internal class ClipboardLink(context: Context, private val scope: CoroutineScope, private val rime: RimeSession) {
     private val settings = LinkSettings(context)
-    private val clipboard = context.getSystemService(ClipboardManager::class.java)
+    private val clipboard = requireNotNull(context.getSystemService(ClipboardManager::class.java))
     private val signal = Channel<Unit>(Channel.CONFLATED)
     private val dictionaryLock = Mutex()
     private var pending: Outgoing? = null
@@ -56,7 +55,7 @@ internal class ClipboardLink(context: Context, private val scope: CoroutineScope
             if (key == "device") revision = 0
             refresh()
         }
-        if (key == "syncNow") scope.launch { syncDictionaryOnce() }
+        if (key == "syncNow") scope.launch { syncDictionarySafely() }
     }
 
     private data class Outgoing(val id: String, val text: String, val timestamp: Long)
@@ -99,14 +98,16 @@ internal class ClipboardLink(context: Context, private val scope: CoroutineScope
         if (description.label?.toString() == REMOTE_LABEL || clip.itemCount != 1 ||
             description.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true
         ) return null
-        clip.getItemAt(0).text?.toString()?.takeIf { it.isNotEmpty() && it.toByteArray().size <= CLIP_LIMIT }
+        val item = clip.getItemAt(0)
+        val text = item.text?.toString() ?: item.uri?.takeIf { it.scheme == "https" || it.scheme == "http" }?.toString()
+        text?.takeIf { it.isNotEmpty() && it.toByteArray().size <= CLIP_LIMIT }
     }.getOrNull()
 
     private fun capture(force: Boolean) {
         if (sensitive || !registered) return
         val text = currentText()
         if (text == null) {
-            if (clipboard.primaryClipDescription?.label?.toString() != REMOTE_LABEL) {
+            if (runCatching { clipboard.primaryClipDescription?.label?.toString() }.getOrNull() != REMOTE_LABEL) {
                 localChanges++
                 pending = null
             }
@@ -134,9 +135,7 @@ internal class ClipboardLink(context: Context, private val scope: CoroutineScope
             if (settings.prefs.getBoolean("share", true)) launch {
                 delay(10000)
                 while (isActive) {
-                    try { syncDictionaryOnce() }
-                    catch (cancel: CancellationException) { throw cancel }
-                    catch (_: Exception) { }
+                    syncDictionarySafely()
                     delay(10 * 60 * 1000L)
                 }
             }
@@ -178,7 +177,13 @@ internal class ClipboardLink(context: Context, private val scope: CoroutineScope
         }
     }
 
-    private suspend fun syncDictionaryOnce() = dictionaryLock.withLock {
+    private suspend fun syncDictionarySafely() {
+        try { syncDictionaryOnce() }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { }
+    }
+
+    private suspend fun syncDictionaryOnce(): Unit = dictionaryLock.withLock {
         if (sensitive || !settings.prefs.getBoolean("share", true)) return@withLock
         val device = settings.device() ?: return@withLock
         val client = LinkHttp(device.server, device.token)
