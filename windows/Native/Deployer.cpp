@@ -5,6 +5,7 @@
 #include <rime_api.h>
 #include <rime_levers_api.h>
 #include <shellapi.h>
+#include <string_view>
 
 CAppModule _Module;
 

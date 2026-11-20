@@ -4,6 +4,7 @@ import argparse
 import re
 import shutil
 import subprocess
+from html import escape
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
@@ -44,7 +45,7 @@ def write_overlay(source, version, boost):
                   VERSION_MINOR=minor, VERSION_PATCH=patch, PRODUCT_VERSION=f'{version}.0',
                   FILE_VERSION=f'{version}.0')
     for key, value in fields.items():
-        properties = properties.replace(f'${key}', str(value))
+        properties = properties.replace(f'${key}', escape(str(value)))
     (source / 'weasel.props').write_text(properties, encoding='utf-8')
 
     constants = source / 'include/WeaselConstants.h'
@@ -59,6 +60,8 @@ def write_overlay(source, version, boost):
     ipc = source / 'include/WeaselIPC.h'
     replace(ipc, 'WeaselIPCWindow_1.0', 'ShuangpinLinkIPCWindow_1.0')
     replace(ipc, 'WeaselNamedPipe', 'ShuangpinLinkNamedPipe')
+    replace(source / 'WeaselIPCServer/WeaselServerImpl.cpp',
+            '(WEASEL)Furandōru-Sukāretto-', 'ShuangpinLinkEngine-')
 
     utility_cpp = source / 'RimeWithWeasel/WeaselUtility.cpp'
     replace_pattern(utility_cpp, r'(?ms)^fs::path WeaselUserDataPath\(\).*?^}', r'''
@@ -88,6 +91,7 @@ fs::path WeaselUserDataPath() {
     replace(tsf / 'dllmain.cpp', '      SetUnhandledExceptionFilter(_UnhandledExceptionFilter);\n', '')
     replace(tsf / 'dllmain.cpp', 'rime.weasel', 'rime.shuangpin_link')
     replace(tsf / 'WeaselTSF.cpp', r'Software\\Rime\\weasel', r'Software\\ShuangpinLink\\IME')
+    replace(tsf / 'WeaselTSF.cpp', '#include <thread>\n', '#include <atomic>\n#include <thread>\n')
     replace_pattern(tsf / 'WeaselTSF.cpp', r'(?ms)^static unsigned int retry = 0;.*?^}', r'''
 bool WeaselTSF::_EnsureServerConnected() {
   if (m_client.Echo())
@@ -95,6 +99,11 @@ bool WeaselTSF::_EnsureServerConnected() {
   _Reconnect();
   if (m_client.Echo())
     return true;
+  static std::atomic<ULONGLONG> next_launch{0};
+  const ULONGLONG now = GetTickCount64();
+  auto allowed = next_launch.load();
+  if (now < allowed || !next_launch.compare_exchange_strong(allowed, now + 1500))
+    return false;
   const auto root = _GetRootDir();
   if (!root.empty()) {
     const auto server = std::filesystem::path(root) / L"ShuangpinImeServer.exe";
@@ -102,7 +111,10 @@ bool WeaselTSF::_EnsureServerConnected() {
   }
   return false;
 }'''.lstrip())
-    replace_pattern(tsf / 'LanguageBar.cpp', r'(?ms)^std::wstring WeaselTSF::_GetRootDir\(\).*?^}', r'''
+    bar = tsf / 'LanguageBar.cpp'
+    replace_pattern(bar, r'(?ms)^static LPCWSTR GetWeaselRegName\(\).*?(?=^CLangBarItemButton::CLangBarItemButton)', '')
+    replace(bar, 'WeaselTSF Button', '双拼互联', expected=2)
+    replace_pattern(bar, r'(?ms)^std::wstring WeaselTSF::_GetRootDir\(\).*?^}', r'''
 std::wstring WeaselTSF::_GetRootDir() {
   wchar_t path[32768]{};
   const DWORD length = GetModuleFileNameW(g_hInst, path, ARRAYSIZE(path));
@@ -110,8 +122,12 @@ std::wstring WeaselTSF::_GetRootDir() {
     return {};
   return std::filesystem::path(path).parent_path().wstring();
 }'''.lstrip())
-    replace_pattern(tsf / 'LanguageBar.cpp', r'(?ms)^void WeaselTSF::_HandleLangBarMenuSelect\(UINT wID\).*?^}', r'''
+    replace_pattern(bar, r'(?ms)^void WeaselTSF::_HandleLangBarMenuSelect\(UINT wID\).*?^}', r'''
 void WeaselTSF::_HandleLangBarMenuSelect(UINT command) {
+  if (command == ID_WEASELTRAY_ENABLE_ASCII || command == ID_WEASELTRAY_DISABLE_ASCII) {
+    m_client.TrayCommand(command);
+    return;
+  }
   if (command != ID_WEASELTRAY_SETTINGS)
     return;
   wchar_t path[32768]{};
@@ -163,7 +179,9 @@ void WeaselTSF::_HandleLangBarMenuSelect(UINT command) {
         identities = {'InternalName': branded, 'OriginalFilename': filename}
         content = re.sub(r'(?m)^(\s*VALUE "(CompanyName|FileDescription|InternalName|OriginalFilename|ProductName)",[ \t]*)[^\n]+',
                          lambda match: f'{match[1]}"{identities.get(match[2], "双拼互联")}"', content)
-        content = content.replace('小狼毫', '双拼互联')
+        content = content.replace('小狼毫', '双拼互联').replace('afxres.h', 'winres.h')
+        if project == server:
+            content = re.sub(r'(?ms)^\w+ APPCAST\s*\nBEGIN\s*\n.*?^END\n', '', content)
         if project == tsf:
             content = re.sub(r'(?ms)^(IDR_MENU_POPUP\w* MENU)\nBEGIN.*?^END',
                              r'\1\nBEGIN\n    POPUP "双拼互联"\n    BEGIN\n        MENUITEM "双拼互联设置", ID_WEASELTRAY_SETTINGS\n    END\nEND', content)

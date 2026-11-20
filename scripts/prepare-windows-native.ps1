@@ -74,13 +74,20 @@ foreach ($name in 'rime_api.h','rime_levers_api.h') {
     if (-not $header) { throw "Missing librime header $name." }
     Copy-Item -LiteralPath $header.FullName -Destination $headers -Force
 }
-$engineHash = 'cd3ccdb56cb5dd1b8483f501130d17a1631936d29bb006426d579b383256489c'
+$engineHash = '2d8f1bc3737635a11d9fb1bfca4dc9e70533633930a8a0142a81ca879c39c45b'
 $engineUnpack = Join-Path $build 'windows-native-runtime'
-if (-not (Test-Path -LiteralPath $engineUnpack)) {
-    & $sevenZip x -y "-o$engineUnpack" '-ir!rime.dll' $installer | Out-Host
+function Find-InputEngine {
+    if (Test-Path -LiteralPath $engineUnpack) {
+        Get-ChildItem -LiteralPath $engineUnpack -Recurse -File -Filter 'rime*.dll' |
+            Where-Object { (Get-FileHash -LiteralPath $_.FullName).Hash -eq $engineHash } | Select-Object -First 1
+    }
 }
-$engine = Get-ChildItem -LiteralPath $engineUnpack -Recurse -File -Filter rime.dll |
-    Where-Object { (Get-FileHash -LiteralPath $_.FullName).Hash -eq $engineHash } | Select-Object -First 1
+$engine = Find-InputEngine
+if (-not $engine) {
+    # The external archive contains both architectures at the same logical path.
+    & $sevenZip x -y -aou "-o$engineUnpack" '-ir!rime.dll' $installer | Out-Host
+    $engine = Find-InputEngine
+}
 if (-not $engine) { throw 'The expected x64 input engine was not found.' }
 $definition = Join-Path $source 'rime.def'
 @('LIBRARY rime.dll','EXPORTS','    rime_get_api') | Set-Content -LiteralPath $definition -Encoding ascii
