@@ -3,6 +3,19 @@
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
 
+static bool LinkInsertAtCaret(ITfContext* context, TfEditCookie ec, const std::wstring& text) {
+  com_ptr<ITfInsertAtSelection> insert;
+  com_ptr<ITfRange> inserted;
+  if (FAILED(context->QueryInterface(&insert)) || !insert ||
+      FAILED(insert->InsertTextAtSelection(ec, 0, text.data(), static_cast<LONG>(text.size()), &inserted)))
+    return false;
+  if (inserted && SUCCEEDED(inserted->Collapse(ec, TF_ANCHOR_END))) {
+    TF_SELECTION caret{inserted.p, {TF_AE_NONE, FALSE}};
+    context->SetSelection(ec, 1, &caret);
+  }
+  return true;
+}
+
 // Passive suggestions own a candidate window and an anchor, never a document
 // composition. Ending them cannot erase text or reset the editor's selection.
 void WeaselTSF::_StartLinkPrediction(TfEditCookie ec) {

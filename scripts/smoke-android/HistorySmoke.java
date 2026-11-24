@@ -18,6 +18,7 @@ import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.inputmethod.BaseInputConnection;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -164,6 +165,21 @@ public class HistorySmoke extends Instrumentation {
         sendKeyDownUpSync(KeyEvent.KEYCODE_DEL);
         waitForEditor("AB你CD");
         waitForPredictionToClose();
+        java.util.concurrent.atomic.AtomicInteger searches = new java.util.concurrent.atomic.AtomicInteger();
+        runOnMainSync(() -> {
+            editor.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+            editor.setOnEditorActionListener((view, action, event) -> {
+                if (action != EditorInfo.IME_ACTION_SEARCH) return false;
+                searches.incrementAndGet();
+                return true;
+            });
+        });
+        openPrediction();
+        touch(968, 2108, 40); // The editor's Search action
+        for (int i = 0; i < 40 && searches.get() == 0; i++) SystemClock.sleep(100);
+        if (searches.get() != 1) throw new AssertionError("Enter did not perform the requested editor action once");
+        waitForPredictionToClose();
+        waitForEditor("AB你好CD");
         openPrediction();
         typeNihaoAndSpace();
         waitForEditor("AB你好你好CD");

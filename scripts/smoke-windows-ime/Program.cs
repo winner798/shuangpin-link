@@ -300,11 +300,21 @@ internal static class Program
         editor.Select(0, 1);
         await WaitFor(() => editor.SelectionLength == 1 && !CandidateWindowVisible(), "Changing the host selection kept suggestions open.");
 
-        await OpenSuggestions();
-        var popup = CandidateWindow();
-        if (!GetWindowRect(popup, out var bounds)) throw new Win32Exception(Marshal.GetLastPInvokeError());
-        // The first horizontal candidate is just inside the left padding, beside its selection label.
-        ClickAt(new Point(bounds.Left + 30 * editor.DeviceDpi / 96, (bounds.Top + bounds.Bottom) / 2), popup);
+        editor.Text = "甲乙";
+        editor.Select(1, 0);
+        await TypeCode(window, editor, "nihao");
+        await WaitFor(CandidateWindowVisible, "No active spelling candidates for a mouse pick.");
+        void ClickFirstCandidate()
+        {
+            var popup = CandidateWindow();
+            if (!GetWindowRect(popup, out var bounds)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+            // The first horizontal candidate is just inside the left padding, beside its selection label.
+            ClickAt(new Point(bounds.Left + 30 * editor.DeviceDpi / 96, (bounds.Top + bounds.Bottom) / 2), popup);
+        }
+        ClickFirstCandidate();
+        await WaitFor(() => editor.Text == committed && CandidateWindowVisible(),
+            "Picking 你好 by mouse did not commit it and offer continuations.");
+        ClickFirstCandidate();
         await WaitFor(() => editor.Text.StartsWith("甲你好", StringComparison.Ordinal) && editor.Text.EndsWith('乙')
             && editor.Text.Length > committed.Length && editor.Text[3..^1].All(c => c is >= '\u3400' and <= '\u9fff'),
             "Clicking a suggested word did not insert it.");

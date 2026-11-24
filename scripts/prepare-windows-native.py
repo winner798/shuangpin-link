@@ -62,8 +62,65 @@ def add_passive_predictions(source, native):
     replace(source / 'WeaselIPC/Configurator.cpp', '  if (key[1] == L"inline_preedit") {',
             '  if (!m_pTarget->p_config) return;\n  if (key[1] == L"post_commit_prediction")\n'
             '    m_pTarget->p_config->post_commit_prediction = bool_value;\n  if (key[1] == L"inline_preedit") {')
+    # Append commands so a DLL already loaded in another app keeps its original wire protocol.
+    server_impl = source / 'WeaselIPCServer/WeaselServerImpl.cpp'
+    replace(ipc, '  WEASEL_IPC_LAST_COMMAND', '  LINK_IPC_QUERY_PICK_API,\n  LINK_IPC_PICK_AND_RESPOND,\n  WEASEL_IPC_LAST_COMMAND')
+    replace(server_impl, '  PIPE_MSG_HANDLE(WEASEL_IPC_ECHO, OnEcho)', '''  case LINK_IPC_QUERY_PICK_API: _result = 1; break;
+  PIPE_MSG_HANDLE(LINK_IPC_PICK_AND_RESPOND, OnSelectCandidateOnCurrentPage);
+  PIPE_MSG_HANDLE(WEASEL_IPC_ECHO, OnEcho)''')
+    replace(source / 'WeaselIPC/WeaselClientImpl.h', '  UINT session_id;',
+            '  bool directPickSupported = false;\n  UINT session_id;')
+    replace(client, '  _WriteClientInfo();', '  directPickSupported = _SendMessage(LINK_IPC_QUERY_PICK_API, 0, 0) == 1;\n  _WriteClientInfo();')
+    replace_pattern(client, r'(?ms)^bool ClientImpl::SelectCandidateOnCurrentPage\(size_t index\) \{.*?^}', '''bool ClientImpl::SelectCandidateOnCurrentPage(size_t index) {
+  if (!_Active() || index >= MAXDWORD) return false;
+  if (directPickSupported)
+    return _SendMessage(LINK_IPC_PICK_AND_RESPOND, static_cast<DWORD>(index), session_id) == 1;
+  // An older server leaves the commit pending. Its highlight RPC always responds,
+  // but the engine rejects MAXDWORD before applying any highlight to the menu.
+  _SendMessage(WEASEL_IPC_SELECT_CANDIDATE_ON_CURRENT_PAGE, static_cast<DWORD>(index), session_id);
+  _SendMessage(WEASEL_IPC_HIGHLIGHT_CANDIDATE_ON_CURRENT_PAGE, MAXDWORD, session_id);
+  return true;
+}''')
+    # Deliver the selected word and its new candidates in one IPC response.
+    # No synthetic keyboard input is needed to refresh the document or the UI.
+    replace(ipc, 'void SelectCandidateOnCurrentPage(size_t index, DWORD session_id) {}',
+            'bool SelectCandidateOnCurrentPage(size_t index, DWORD session_id, EatLine eat) { return false; }')
+    replace_pattern(source / 'include/RimeWithWeasel.h',
+                    r'void SelectCandidateOnCurrentPage\(size_t index,\s*WeaselSessionId ipc_id\);',
+                    'bool SelectCandidateOnCurrentPage(size_t index, WeaselSessionId ipc_id, EatLine eat);')
+    replace_pattern(handler, r'(?ms)^void RimeWithWeaselHandler::SelectCandidateOnCurrentPage\(.*?^}', '''bool RimeWithWeaselHandler::SelectCandidateOnCurrentPage(
+    size_t index, WeaselSessionId ipc_id, EatLine eat) {
+  if (m_disabled || !rime_api->select_candidate_on_current_page(to_session_id(ipc_id), index))
+    return false;
+  if (eat) {
+    _Respond(ipc_id, eat);
+    _UpdateUI(ipc_id);
+  } else {
+    get_session_status(ipc_id).pendingLegacyPick = true;
+  }
+  return true;
+}''')
+    replace(source / 'WeaselIPCServer/WeaselServerImpl.cpp',
+            '  if (m_pRequestHandler)\n    m_pRequestHandler->SelectCandidateOnCurrentPage(wParam, lParam);\n  return 0;',
+            '''  if (!m_pRequestHandler) return 0;
+  if (uMsg == WEASEL_IPC_SELECT_CANDIDATE_ON_CURRENT_PAGE) {
+    m_pRequestHandler->SelectCandidateOnCurrentPage(wParam, lParam, nullptr);
+    return 0;
+  }
+  auto eat = [this](std::wstring& msg) { *channel << msg; return true; };
+  return m_pRequestHandler->SelectCandidateOnCurrentPage(wParam, lParam, eat);''')
+    replace(source / 'include/RimeWithWeasel.h', '  bool __synced;', '  bool pendingLegacyPick = false;\n  bool __synced;')
+    replace(handler, '  Bool handled = rime_api->process_key(session_id, keyEvent.keycode,',
+            '''  auto& state = get_session_status(ipc_id);
+  const bool refresh = state.pendingLegacyPick && keyEvent.keycode == ibus::Select && keyEvent.mask == 0;
+  state.pendingLegacyPick = false;
+  Bool handled = refresh || rime_api->process_key(session_id, keyEvent.keycode,''')
+    shutil.copyfile(native / 'CandidatePick.h', tsf / 'CandidatePick.h')
+    replace_pattern(tsf / 'CandidateList.cpp', r'(?ms)^void WeaselTSF::_SelectCandidateOnCurrentPage\(.*?^}',
+                    '#include "CandidatePick.h"')
     shutil.copyfile(native / 'PredictionView.h', tsf / 'PredictionView.h')
-    replace(tsf / 'WeaselTSF.h', '  /* ui callback functions private */', '''  com_ptr<ITfContext> _linkPredictionContext;
+    replace(tsf / 'WeaselTSF.h', '  /* ui callback functions private */', '''  friend class LinkCandidatePick;
+  com_ptr<ITfContext> _linkPredictionContext;
   com_ptr<ITfRange> _linkPredictionAnchor;
   HWND _linkPredictionWindow = nullptr;
   void _StartLinkPrediction(TfEditCookie ec);
@@ -76,6 +133,13 @@ def add_passive_predictions(source, native):
     replace(edit, '    if (!commit.empty()) {',
             '    if (!config.post_commit_prediction || !commit.empty() || _linkPredictionContext.p != _pEditSessionContext.p)\n'
             '      _EndLinkPrediction(false);\n    if (!commit.empty()) {')
+    replace_pattern(edit, r'(?ms)^      if \(!_IsComposing\(\)\) \{.*?^      _EndComposition\(_pEditSessionContext, false\);',
+                    '''      if (_IsComposing() || !LinkInsertAtCaret(_pEditSessionContext, ec, commit)) {
+        if (!_IsComposing())
+          _StartComposition(_pEditSessionContext, _fCUASWorkaroundEnabled && !config.inline_preedit);
+        _InsertText(_pEditSessionContext, commit);
+        _EndComposition(_pEditSessionContext, false);
+      }''')
     replace(edit, '    if (_status.composing && !_IsComposing()) {',
             '    if (config.post_commit_prediction) {\n      _StartLinkPrediction(ec);\n'
             '    } else if (_status.composing && !_IsComposing()) {')

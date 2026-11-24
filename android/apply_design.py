@@ -180,37 +180,36 @@ def apply_design(src, assets):
         clipboardLink.suspendClipboard()""")
     input_view = "    private var inputView: InputView? = null"
     apply_edit(ime, input_view, input_view + "\n    private var inputViewAwaitingTheme = false")
-    # Track the expected caret of our own edit. Selection notifications also arrive
-    # after an ordinary commit, before the user has done anything in the editor.
-    apply_edit(ime, "    private var cursorUpdateIndex = 0", """    private var cursorUpdateIndex = 0
-    private var linkCaret = -1
-    private var linkComposingStart = -1
+    # Regenerate the call sites in-place on pristine and previously prepared trees.
+    source = ime.read_text(encoding="utf-8")
+    for before, after, body in [
+        ("    private var cursorUpdateIndex = 0\n", "    private val recreateInputViewPrefs", """
+    private val linkSelection = com.osfans.trime.link.LinkEditorSelection()
 
     internal fun dismissLinkPrediction() {
         postRimeJob { dismissPrediction() }
-    }""")
-    apply_edit(ime, '        clipboardLink.editor(attribute)', '''        clipboardLink.editor(attribute)
-        linkCaret = minOf(attribute.initialSelStart, attribute.initialSelEnd)
-        linkComposingStart = -1
-        dismissLinkPrediction()''')
-    apply_edit(ime, "        cursorUpdateIndex += 1", """        if (candidatesStart >= 0 && candidatesEnd >= 0) {
-            if (composingText.isNotEmpty()) linkComposingStart = candidatesStart
-        } else {
-            val moved = oldSelStart != newSelStart || oldSelEnd != newSelEnd
-            if (moved && linkCaret >= 0 && (newSelStart != linkCaret || newSelEnd != linkCaret)) {
-                dismissLinkPrediction()
-            }
-            linkCaret = minOf(newSelStart, newSelEnd)
+    }
+
+"""),
+        ("        clipboardLink.editor(attribute)\n", "        val isNullType", """        linkSelection.start(attribute.initialSelStart, attribute.initialSelEnd)
+        dismissLinkPrediction()
+"""),
+        ("            candidatesEnd,\n        )\n", "        cursorUpdateIndex += 1", """        if (linkSelection.externallyMoved(newSelStart, newSelEnd, candidatesStart, composingText.isNotEmpty(),
+                oldSelStart != newSelStart || oldSelEnd != newSelEnd)) {
+            dismissLinkPrediction()
         }
-        cursorUpdateIndex += 1""")
-    apply_edit(ime, "        // when composing text equals commit content", """        val start = if (linkComposingStart >= 0) linkComposingStart else linkCaret
-        linkCaret = if (start >= 0) start + text.length else -1
-        linkComposingStart = -1
-        // when composing text equals commit content""")
-    apply_edit(ime, "            ic.setComposingText(text, 1)", """            if (linkComposingStart < 0 && text.isNotEmpty()) linkComposingStart = linkCaret
-            if (linkComposingStart >= 0) linkCaret = linkComposingStart + text.length
-            if (text.isEmpty()) linkComposingStart = -1
-            ic.setComposingText(text, 1)""")
+"""),
+        ("    fun commitText(text: String) {\n        val ic = currentInputConnection ?: return\n",
+         "        // when composing text equals commit content", "        linkSelection.commit(text.length)\n\n"),
+        ("                ic.deleteSurroundingText(1, 0)\n            }\n", "            ic.setComposingText(text, 1)",
+         "            linkSelection.composing(text.length)\n"),
+    ]:
+        if source.count(before) != 1:
+            raise RuntimeError(f"Unexpected editor selection anchor: {before}")
+        start = source.index(before) + len(before)
+        end = source.index(after, start)
+        source = source[:start] + body + source[end:]
+    ime.write_text(source, encoding="utf-8")
     apply_edit(ime, "        super.onViewClicked(focusChanged)", """        super.onViewClicked(focusChanged)
         dismissLinkPrediction()""")
     apply_edit(ime, "        super.onUpdateEditorToolType(toolType)", """        super.onUpdateEditorToolType(toolType)
