@@ -139,6 +139,7 @@ fs::path WeaselUserDataPath() {
     replace(tsf / 'WeaselTSF.h', '  weasel::Status _status;', '''  com_ptr<ITfContext> _linkFocusedContext;
   HWND _linkFocusedWindow = nullptr;
   bool _linkMasked = false;
+  bool _linkPrivateEditor = false;
   weasel::Status _status;''')
     for path in (key_events, tsf / 'WeaselTSF.h'):
         replace(path, '_ProcessKeyEvent(WPARAM', '_ProcessKeyEvent(ITfContext* context, WPARAM')
@@ -147,12 +148,14 @@ fs::path WeaselUserDataPath() {
     replace(key_events, '  weasel::KeyEvent ke;', '''  const HWND focus = GetFocus();
   const bool masked = link_english::PasswordControl(focus);
   if (!_linkFocusedContext || _linkFocusedContext.p != context || _linkFocusedWindow != focus || _linkMasked != masked) {
-    m_client.FocusIn(LinkPrivateContext(this, context, _tfClientId) ? 1 : 0);
+    const HRESULT permission = LinkEditorPermission(this, context, _tfClientId);
+    _linkPrivateEditor = permission == S_FALSE;
+    m_client.FocusIn(permission == S_OK ? 0 : 1);
     _linkFocusedContext = context;
     _linkFocusedWindow = focus;
     _linkMasked = masked;
   }
-  if (masked) {
+  if (masked || _linkPrivateEditor) {
     *pfEaten = FALSE;
     return;
   }

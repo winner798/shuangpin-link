@@ -433,6 +433,26 @@ def prepare_android():
             setRuntimeOption("link_new_editor", !getRuntimeOption("link_new_editor"))
             setNullInputType(isNullType)'''),
     ])
+    # Enforce ASCII at the engine boundary too: hardware Shift and schema changes
+    # can switch the engine while a protected field still has focus.
+    change(java / "core/Rime.kt", [
+        ("    private fun processKeyInner(value: Int, modifiers: Int, isVirtual: Boolean): Boolean {",
+         '''    private var linkPrivateEditor = false
+
+    private fun protectPrivateEditor() {
+        if (linkPrivateEditor && !getRimeOption("ascii_mode")) setRimeOption("ascii_mode", true)
+    }
+
+    private fun processKeyInner(value: Int, modifiers: Int, isVirtual: Boolean): Boolean {
+        protectPrivateEditor()'''),
+        ("        setRimeOption(option, value)", '''        if (option == "link_private") linkPrivateEditor = value
+        setRimeOption(option, value)
+        if (linkPrivateEditor && (option == "ascii_mode" || option == "link_private")) protectPrivateEditor()'''),
+        ('    override suspend fun simulateKeySequence(sequence: String): Boolean = withRimeContext {\n'
+         '        Timber.d("simulateKeySequence: $sequence")',
+         '    override suspend fun simulateKeySequence(sequence: String): Boolean = withRimeContext {\n'
+         '        protectPrivateEditor()'),
+    ])
 
 
 def prepare_windows():

@@ -55,9 +55,11 @@ return function(key, env)
             -- Keep ordinary @mentions, custom domains and punctuation intact.
             env.engine:commit_text(ctx.input)
             ctx:clear()
+            segment = nil
         end
     end
     if not key:ctrl() and not key:alt() and not key:super() and code == 64 then
+        ctx:set_property("link_break", "1")
         -- In Chinese mode a Latin username may still be in the preedit.
         if ctx.input ~= "" then env.engine:commit_text(ctx.input) end
         ctx:clear()

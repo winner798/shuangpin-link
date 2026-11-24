@@ -50,6 +50,7 @@ end
 
 local function active(ctx, env)
     return env.enabled and db and not ctx:get_option("ascii_mode") and not ctx:get_option("link_private")
+        and not ctx:get_option("incognito_mode")
 end
 
 local function remember(ctx, env)
@@ -62,10 +63,14 @@ local function remember(ctx, env)
         count_choice(env.scheme .. input, text)
     end
     if env.previous then count_choice("after/" .. env.previous, text) end
-    if env.older then count_choice("pair/" .. env.older .. "/" .. env.previous, text) end
+    if env.older then
+        count_choice("pair/" .. env.older .. "/" .. env.previous, text)
+        local combined = env.older .. env.previous
+        if utf8.len(combined) <= MAX_CHARS then count_choice("after/" .. combined, text) end
+    end
     -- A sentence can also be selected in one operation. Its leading characters can
     -- recall the untyped suffix on a later visit, even when the bundled model cannot.
-    for i = 2, math.min(8, utf8.len(text) - 1) do
+    for i = 1, math.min(8, utf8.len(text) - 1) do
         local cut = utf8.offset(text, i + 1)
         count_choice("after/" .. text:sub(1, cut - 1), text:sub(cut))
     end
@@ -102,7 +107,9 @@ function filter.init(env)
     local ctx = env.engine.context
     env.commit = ctx.commit_notifier:connect(function(context) remember(context, env) end)
     env.option = ctx.option_update_notifier:connect(function(_, name)
-        if name == "link_new_editor" or name == "link_private" or name == "ascii_mode" then reset(env) end
+        if name == "link_new_editor" or name == "link_private" or name == "incognito_mode" or name == "ascii_mode" then
+            reset(env)
+        end
     end)
     env.property = ctx.property_update_notifier:connect(function(_, name)
         if name == "link_break" then reset(env) end

@@ -26,6 +26,18 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 
 internal data class HistoryItem(val time: Long, val text: String)
+internal data class HistorySnapshot(val through: Long = 0, val items: List<HistoryItem> = emptyList()) {
+    fun record(item: HistoryItem, after: Long): HistorySnapshot {
+        if (item.time <= maxOf(through, after)) return this
+        return HistorySnapshot(item.time, (listOf(item) + items.filter { it.text != item.text }).take(50))
+    }
+
+    companion object {
+        const val HOUR = 60 * 60 * 1000L
+        fun canImport(time: Long, after: Long, now: Long) = time > after && now - time in 0L..HOUR
+    }
+}
+
 internal data class HistoryView(
     val items: List<HistoryItem> = emptyList(),
     val preview: String? = null,
@@ -57,8 +69,6 @@ internal class LinkHistory(
     private val scope: CoroutineScope,
     private val eligible: () -> Boolean,
 ) {
-    private data class Snapshot(val through: Long = 0, val items: List<HistoryItem> = emptyList())
-
     private val file by lazy { historyFile(context) }
     private val mutableView = MutableStateFlow(HistoryView())
     val view = mutableView.asStateFlow()
@@ -91,35 +101,34 @@ internal class LinkHistory(
     }
 
     fun showRecordedPreview(time: Long) {
-        if (!enabled || time <= settings.prefs.getLong("historyAfter", 0) ||
-            System.currentTimeMillis() - time !in 0L..IMPORT_WINDOW) return
+        if (!canImport(time)) return
         previewTime = time
         refresh()
     }
 
+    fun canImport(time: Long): Boolean = enabled &&
+        HistorySnapshot.canImport(time, settings.prefs.getLong("historyAfter", 0), System.currentTimeMillis())
+
     fun accept(text: String, time: Long) {
-        if (!enabled || time <= settings.prefs.getLong("historyAfter", 0)) return
-        val now = System.currentTimeMillis()
-        if (time !in (now - IMPORT_WINDOW)..now) return
+        if (!canImport(time)) return
         previewTime = time
         change { snapshot ->
-            if (time <= maxOf(snapshot.through, settings.prefs.getLong("historyAfter", 0))) snapshot
-            else Snapshot(time, (listOf(HistoryItem(time, text)) + snapshot.items.filter { it.text != text }).take(50))
+            snapshot.record(HistoryItem(time, text), settings.prefs.getLong("historyAfter", 0))
         }
     }
 
     fun remove(item: HistoryItem) = change { old -> old.copy(items = old.items.filter { it.time != item.time }) }
 
-    fun clear() = change(erase = true) { Snapshot(System.currentTimeMillis()) }
+    fun clear() = change(erase = true) { HistorySnapshot(System.currentTimeMillis()) }
 
-    private fun change(erase: Boolean = false, transform: (Snapshot) -> Snapshot) {
+    private fun change(erase: Boolean = false, transform: (HistorySnapshot) -> HistorySnapshot) {
         if (!enabled) return
         val at = generation
         scope.launch {
             try {
                 lock.withLock {
                     val updated = withContext(Dispatchers.IO) {
-                        val previous = if (erase) Snapshot() else read()
+                        val previous = if (erase) HistorySnapshot() else read()
                         val cutoff = System.currentTimeMillis() - RETENTION
                         val next = transform(previous.copy(items = previous.items.filter { it.time > cutoff }))
                         if (erase || next != previous) write(next)
@@ -138,8 +147,8 @@ internal class LinkHistory(
         }
     }
 
-    private fun read(): Snapshot {
-        val bytes = try { file.readFully() } catch (_: FileNotFoundException) { return Snapshot() }
+    private fun read(): HistorySnapshot {
+        val bytes = try { file.readFully() } catch (_: FileNotFoundException) { return HistorySnapshot() }
         require(bytes.size >= 28)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, localAesKey(KEY), GCMParameterSpec(128, bytes, 0, 12))
@@ -149,10 +158,10 @@ internal class LinkHistory(
             val item = array.getJSONArray(index)
             HistoryItem(item.getLong(0), item.getString(1))
         }
-        return Snapshot(json.getLong("through"), items)
+        return HistorySnapshot(json.getLong("through"), items)
     }
 
-    private fun write(next: Snapshot) {
+    private fun write(next: HistorySnapshot) {
         val rows = JSONArray()
         for (entry in next.items) rows.put(JSONArray().put(entry.time).put(entry.text))
         val payload = JSONObject().put("through", next.through).put("items", rows)
@@ -172,8 +181,7 @@ internal class LinkHistory(
 
     companion object {
         private const val KEY = "shuangpin-local-clipboard-v1"
-        private const val IMPORT_WINDOW = 60 * 60 * 1000L
-        private const val RETENTION = 7 * 24 * IMPORT_WINDOW
+        private const val RETENTION = 7 * 24 * HistorySnapshot.HOUR
         private val lock = Mutex()
         private fun historyFile(context: Context) = AtomicFile(File(context.noBackupFilesDir, "clipboard-history-v1.bin"))
 

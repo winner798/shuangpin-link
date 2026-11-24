@@ -20,12 +20,12 @@ class LinkEditorScope final : public CEditSession {
   }
 };
 
-inline bool LinkPrivateContext(WeaselTSF* service, ITfContext* context, TfClientId client) {
+inline HRESULT LinkEditorPermission(WeaselTSF* service, ITfContext* context, TfClientId client) {
   if (!context || link_english::PasswordControl(GetFocus()))
-    return true;
+    return S_FALSE;
   com_ptr<ITfEditSession> edit;
   edit.Attach(new LinkEditorScope(service, context));
   HRESULT result = E_FAIL;
-  return FAILED(context->RequestEditSession(client, edit, TF_ES_SYNC | TF_ES_READ, &result)) ||
-         result != S_OK;
+  HRESULT request = context->RequestEditSession(client, edit, TF_ES_SYNC | TF_ES_READ, &result);
+  return SUCCEEDED(request) ? result : request;
 }

@@ -115,16 +115,15 @@ internal class LinkClipboard(
             return
         }
         val canSend = active != null && (description == null || description.timestamp > active.lastClipTimestamp)
-        if (active != null && canSend) {
-            if (description != null) active.lastClipTimestamp = description.timestamp
+        if (active != null && (canSend || description?.isSensitive() == true)) {
+            if (description != null) active.lastClipTimestamp = maxOf(active.lastClipTimestamp, description.timestamp)
             active.localChange++
             active.pending = null
             active.privateClip = description?.isSensitive() == true
         }
         history.hidePreview()
         if (description == null || description.isSensitive() || (!history.enabled && !canSend)) return
-        if (currentOnly && (System.currentTimeMillis() - description.timestamp !in 0L..3_600_000L ||
-                description.timestamp <= settings.prefs.getLong("historyAfter", 0))) return
+        if (currentOnly && !history.canImport(description.timestamp)) return
         val clip = runCatching { clipboard.primaryClip }.getOrNull() ?: return
         val current = clip.description
         if (current.isSensitive() && active != null) active.privateClip = !current.trustedReceipt()

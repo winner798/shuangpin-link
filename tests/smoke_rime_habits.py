@@ -44,6 +44,9 @@ def run_suite(user):
     shared = args.shared.resolve()
     shutil.copytree(".build/windows-data", user, dirs_exist_ok=True)
     (user / "link_habits").mkdir(exist_ok=True)
+    (user / "custom_phrase.txt").write_text(
+        "青柚竹筏\tzzqa\t99999\n青柚\tzzqb\t99999\n纸鹤锚点\tzzqc\t99999\n紫瓷圆盘\tzzqd\t99999\n",
+        encoding="utf-8")
     traits = Traits(c.sizeof(Traits)-4, str(shared).encode(), str(user).encode(), b"Shuangpin Link",
                     b"shuangpin-link", b"1", b"rime.habits-test", None, 2, b"", None, None)
     api("Setup", None, c.POINTER(Traits))(c.byref(traits))
@@ -101,6 +104,41 @@ def run_suite(user):
         print("learned prediction", menu())
         assert menu()[0] == "企鹅"
         reset()
+        type_code("zzqa")
+        choose("青柚竹筏")
+        type_code("qie")
+        choose("企鹅")
+        reset()
+        type_code("zzqa")
+        choose("青柚竹筏")
+        assert menu()[0] == "企鹅", menu()
+        reset()
+        type_code("zzqb")
+        choose("青柚")
+        assert menu()[0] == "竹筏", menu()
+        assert key(32) and commit() == "竹筏"
+        reset()
+        type_code("zzqc")
+        choose("纸鹤锚点")
+        option("link_new_editor", True)
+        type_code("zzqd")
+        choose("紫瓷圆盘")
+        option("link_new_editor", False)
+        reset()
+        type_code("zzqc")
+        choose("纸鹤锚点")
+        assert "紫瓷圆盘" not in menu()
+        option("link_private", True)
+        type_code("zzqd")
+        choose("紫瓷圆盘")
+        type_code("zzqc")
+        choose("纸鹤锚点")
+        option("link_private", False)
+        reset()
+        type_code("zzqd")
+        choose("紫瓷圆盘")
+        assert "纸鹤锚点" not in menu()
+        reset()
         for _ in range(3):
             type_code("nihao")
             choose("拟好")
@@ -112,11 +150,22 @@ def run_suite(user):
             assert "@qq.com" in menu()
             assert key(0xff09)
             assert commit() == "@qq.com"
+            type_code("@g")
+            assert menu()[:2] == ["@g", "@gmail.com"], menu()
+            assert key(0xff09) and commit() == "@gmail.com"
         assert type_code("@16")[0:2] == ["@16", "@163.com"]
         assert key(32)
         assert commit() == "@16 "
-        print("passed initials, frequency, learned prediction, and literal/email completion")
         api("DestroySession", I, Z)(session)
+        session = api("CreateSession", Z)()
+        assert api("SelectSchema", I, Z, S)(session, b"rime_ice")
+        option("ascii_mode", False)
+        type_code("zzqa")
+        choose("青柚竹筏")
+        # Further input above also trained other equally frequent successors.
+        assert "企鹅" in menu(), menu()
+        api("DestroySession", I, Z)(session)
+        print("Passed both schemas, frequency ranking, offline continuation, persistence, editor boundaries and email.")
     finally:
         api("Finalize", None)()
 
