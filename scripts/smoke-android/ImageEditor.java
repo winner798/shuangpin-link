@@ -4,7 +4,10 @@ import android.app.Activity;
 import android.content.*;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.inputmethod.*;
 import android.widget.*;
 import java.io.InputStream;
@@ -43,12 +46,33 @@ public class ImageEditor extends Activity {
         root.addView(input);
         root.addView(result);
         setContentView(root);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
         input.requestFocus();
-        input.postDelayed(() -> getSystemService(InputMethodManager.class).showSoftInput(input, InputMethodManager.SHOW_IMPLICIT), 700);
-        input.postDelayed(() -> {
-            Uri uri = Uri.parse("content://io.github.winner798.keyboardpreview.images/test.png");
-            getSystemService(ClipboardManager.class).setPrimaryClip(
-                new ClipData("synthetic test image", new String[]{"image/png"}, new ClipData.Item(uri)));
-        }, 3500);
+        input.post(new Runnable() {
+            final long end = SystemClock.uptimeMillis() + 35000;
+            long shownAt;
+            @Override public void run() {
+                if (isFinishing() || SystemClock.uptimeMillis() >= end) return;
+                InputMethodManager manager = getSystemService(InputMethodManager.class);
+                WindowInsets insets = input.getRootWindowInsets();
+                if (hasWindowFocus() && manager.isActive(input) && insets != null && insets.isVisible(WindowInsets.Type.ime())) {
+                    if (shownAt == 0) shownAt = SystemClock.uptimeMillis();
+                    if (SystemClock.uptimeMillis() - shownAt > 750) {
+                        Uri uri = Uri.parse("content://io.github.winner798.keyboardpreview.images/test.png");
+                        getSystemService(ClipboardManager.class).setPrimaryClip(
+                            new ClipData("synthetic test image", new String[]{"image/png"}, new ClipData.Item(uri)));
+                        result.setText("Synthetic image copied");
+                        return;
+                    }
+                } else {
+                    shownAt = 0;
+                    if (hasWindowFocus()) {
+                        input.requestFocus();
+                        manager.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+                    }
+                }
+                input.postDelayed(this, 300);
+            }
+        });
     }
 }
