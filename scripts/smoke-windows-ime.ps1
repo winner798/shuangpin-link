@@ -116,6 +116,22 @@ try {
     }
     $schemes | Set-Content -LiteralPath (Join-Path $output 'deployed-schemes.txt')
 
+    # Setup launches the settings window asynchronously. Let it finish taking
+    # its initial focus before activating the independent editor's input profile.
+    $appPath = Join-Path $env:LOCALAPPDATA 'ShuangpinLink/app/ShuangpinLink.exe'
+    $appDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $settings = Get-Process -Name ShuangpinLink -ErrorAction SilentlyContinue |
+            Where-Object { $_.SessionId -eq $session -and $_.Path -eq $appPath -and $_.MainWindowHandle -ne 0 } |
+            Select-Object -First 1
+        if ($null -ne $settings -and $settings.WaitForInputIdle(1000)) { break }
+        $settings = $null
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $appDeadline)
+    if ($null -eq $settings) { throw 'The installed settings window did not finish opening.' }
+    Write-Host "Installed settings window is ready (PID $($settings.Id))."
+    $settings.Dispose()
+
     dotnet $editorAssembly $output $dll 2>&1 |
         Tee-Object -FilePath (Join-Path $output 'editor.txt')
 

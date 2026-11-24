@@ -35,6 +35,8 @@ internal static class Program
         if (args.Length != 2)
             throw new ArgumentException("Usage: Editor <screenshot-directory> <installed-TSF-DLL>");
 
+        // Enable the installed service's mode-only trace in this test process.
+        Environment.SetEnvironmentVariable("SHUANGPIN_LINK_INPUT_TEST_TRACE", "1");
         DescribeDesktops();
         ApplicationConfiguration.Initialize();
         using var window = new Form
@@ -120,6 +122,7 @@ internal static class Program
             {
                 Console.Error.WriteLine(error);
                 Console.Error.WriteLine($"Editor text at failure: [{editor.Text}]");
+                DescribeProfile(editor, "at failure");
                 if (GetForegroundWindow() == window.Handle)
                     SaveScreen(window, args[0], "failure");
             }
@@ -134,6 +137,17 @@ internal static class Program
 
     private static object CreateComObject(Guid clsid) =>
         Activator.CreateInstance(Type.GetTypeFromCLSID(clsid, throwOnError: true)!)!;
+
+    private static void DescribeProfile(RichTextBox editor, string stage)
+    {
+        object manager = CreateComObject(ProfileManager);
+        try
+        {
+            int status = ((ITfInputProcessorProfileManager)manager).GetActiveProfile(KeyboardCategory, out var active);
+            Console.WriteLine($"Editor profile {stage}: {status:x8}, {active.ClassId}, {active.ProfileId}, focused={editor.Focused}.");
+        }
+        finally { Marshal.FinalReleaseComObject(manager); }
+    }
 
     private static async Task AssertClipboardPrivacy(nint window)
     {
@@ -241,6 +255,7 @@ internal static class Program
         // Leave editable text on both sides so a missed or duplicated arrow is observable.
         editor.Text = "甲乙丙";
         editor.Select(1, 0);
+        DescribeProfile(editor, $"before {name}");
 
         await TypeCode(window, editor, keys);
         await Task.Delay(430);
@@ -467,6 +482,8 @@ internal static class Program
     {
         bool Ready() => GetForegroundWindow() == window.Handle && field.Focused;
         if (Ready()) return;
+        GetWindowThreadProcessId(GetForegroundWindow(), out uint previousForeground);
+        Console.WriteLine($"Acquiring editor focus from PID {previousForeground}.");
         // Setup starts the settings window asynchronously. It can become foreground after the editor is shown.
         // A real click in the editor form's empty padding can activate it even under the foreground lock.
         for (int attempt = 0; attempt < 12; attempt++)
