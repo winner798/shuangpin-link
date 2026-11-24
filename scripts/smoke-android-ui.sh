@@ -31,6 +31,7 @@ cat > "$work/AndroidManifest.xml" <<'XML'
     <application android:label="输入预览" android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".PreviewActivity" android:exported="true" />
     </application>
+    <instrumentation android:name=".HistorySmoke" android:targetPackage="io.github.winner798.keyboardpreview" />
 </manifest>
 XML
 cat > "$work/PreviewActivity.java" <<'JAVA'
@@ -51,6 +52,7 @@ public class PreviewActivity extends Activity {
         content.setPadding(48, 96, 48, 24);
         content.setOrientation(LinearLayout.VERTICAL);
         EditText editor = new EditText(this);
+        editor.setTag("sampleEditor");
         editor.setHint("在这里试打");
         editor.setInputType(InputType.TYPE_CLASS_TEXT);
         content.addView(editor, new LinearLayout.LayoutParams(-1, -2));
@@ -65,9 +67,9 @@ JAVA
 
 "$tools/aapt2" link -I "$platform" --manifest "$work/AndroidManifest.xml" \
     --min-sdk-version 29 --target-sdk-version 34 -o "$work/editor-unsigned.apk"
-javac --release 8 -cp "$platform" -d "$work/classes" "$work/PreviewActivity.java"
+javac --release 8 -cp "$platform" -d "$work/classes" "$work/PreviewActivity.java" "$(dirname "$0")/smoke-android/HistorySmoke.java"
 "$tools/d8" --min-api 29 --lib "$platform" --output "$work/dex" \
-    "$work/classes/io/github/winner798/keyboardpreview/PreviewActivity.class"
+    "$work/classes/io/github/winner798/keyboardpreview/"*.class
 zip -jq "$work/editor-unsigned.apk" "$work/dex/classes.dex"
 keytool -genkeypair -keystore "$work/test.p12" -storepass android -alias smoke -keyalg RSA \
     -dname 'CN=Android UI regression test' -validity 7
@@ -205,3 +207,6 @@ sleep 1
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml >/dev/null
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-english.xml"
 grep -F 'text="the "' "$output/android-editor-english.xml" >/dev/null
+
+adb shell am instrument -w "$preview/.HistorySmoke" | tee "$output/android-clipboard-history.txt"
+grep -F 'Clipboard preview, paste, deletion and sensitive exclusion verified' "$output/android-clipboard-history.txt" >/dev/null

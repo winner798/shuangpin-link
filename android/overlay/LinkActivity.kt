@@ -82,8 +82,8 @@ class LinkActivity : ComponentActivity() {
         val outline: Int,
         val disabled: Int,
     ) {
-        val accent = 0xFF82CFFF.toInt()
-        val onAccent = 0xFF163048.toInt()
+        val accent = 0xFFD8D7D2.toInt()
+        val onAccent = 0xFF242527.toInt()
     }
 
     private val dark get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -91,27 +91,27 @@ class LinkActivity : ComponentActivity() {
     private val colors by lazy {
         if (dark) {
             Palette(
-                surface = 0xFF0C1826.toInt(),
-                surfaceHighlight = 0xFF1B3954.toInt(),
-                panel = 0xE6232033.toInt(),
-                panelHighlight = 0xED322B49.toInt(),
-                text = 0xFFEAF7FF.toInt(),
-                muted = 0xFFAAC6DA.toInt(),
-                accentText = 0xFFA9DFFF.toInt(),
-                outline = 0xFF345877.toInt(),
-                disabled = 0xFF7794AA.toInt(),
+                surface = 0xFF191A1C.toInt(),
+                surfaceHighlight = 0xFF343638.toInt(),
+                panel = 0xE62C2D2E.toInt(),
+                panelHighlight = 0xED414244.toInt(),
+                text = 0xFFF4F3EF.toInt(),
+                muted = 0xFFC4C3BF.toInt(),
+                accentText = 0xFFECE9E1.toInt(),
+                outline = 0xFF565759.toInt(),
+                disabled = 0xFF9D9D9A.toInt(),
             )
         } else {
             Palette(
-                surface = 0xFFEDF7FF.toInt(),
-                surfaceHighlight = 0xFFFCFEFF.toInt(),
-                panel = 0xD9F8F4FF.toInt(),
+                surface = 0xFFF4F3F1.toInt(),
+                surfaceHighlight = 0xFFFFFFFF.toInt(),
+                panel = 0xD9F8F8F5.toInt(),
                 panelHighlight = 0xF2FFFFFF.toInt(),
-                text = 0xFF163048.toInt(),
-                muted = 0xFF4B6479.toInt(),
-                accentText = 0xFF155A8A.toInt(),
-                outline = 0xFFCDE3F1.toInt(),
-                disabled = 0xFF57748C.toInt(),
+                text = 0xFF242527.toInt(),
+                muted = 0xFF5A5B59.toInt(),
+                accentText = 0xFF42433F.toInt(),
+                outline = 0xFFD0CFCA.toInt(),
+                disabled = 0xFF686967.toInt(),
             )
         }
     }
@@ -164,8 +164,22 @@ class LinkActivity : ComponentActivity() {
                 scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                     .setPrompt("扫描电脑上的配对二维码").setBeepEnabled(false).setOrientationLocked(false))
             }
-            pause = addSwitch(this, "暂停剪贴板同步", "paused", false)
+            pause = addSwitch(this, "暂停剪贴板收发与记录", "paused", false)
             clipboardStatus = addStatus(this, "", top = 8)
+            addSwitch(this, "保存本机剪贴板历史", "history", true)
+            addStatus(this, "点键盘顶栏的「剪贴板」或复制预览即可查看、粘贴和删除。历史在本机加密保存，最多 50 条，保留 7 天。")
+            addAction(this, "清空本机剪贴板历史") {
+                AlertDialog.Builder(this@LinkActivity).setTitle("清空本机剪贴板历史？")
+                    .setNegativeButton("取消", null).setPositiveButton("清空") { _, _ ->
+                        lifecycleScope.launch {
+                            clipboardStatus.text = try {
+                                LinkHistory.clearLocal(this@LinkActivity)
+                                "本机剪贴板历史已清空。"
+                            } catch (cancel: CancellationException) { throw cancel }
+                            catch (_: Exception) { "清空失败，请重试。" }
+                        }
+                    }.show()
+            }
             clearHistory = addAction(this, "清除旧剪贴板历史") { confirmClearClipboardHistory() }
             removePairAction = addAction(this, "移除手机配对") {
                 AlertDialog.Builder(this@LinkActivity).setMessage("移除后，请同时在电脑上解除手机配对。")
@@ -459,7 +473,10 @@ class LinkActivity : ComponentActivity() {
                 if (key == "learning" || key == "fuzzy") {
                     applyInputOption(key, checked)
                 } else {
-                    settings.prefs.edit().putBoolean(key, checked).apply()
+                    settings.prefs.edit().apply {
+                        putBoolean(key, checked)
+                        if (key == "paused" || key == "history") putLong("historyAfter", System.currentTimeMillis())
+                    }.apply()
                     if (key == "share") syncAction.isEnabled = checked && settings.device() != null
                     if (key == "paused") showClipboardStatus(checked)
                 }
@@ -509,7 +526,6 @@ class LinkActivity : ComponentActivity() {
         pause.isChecked = settings.prefs.getBoolean("paused", false)
         share.isChecked = settings.prefs.getBoolean("share", true)
         bindingPreferences = false
-        pause.isEnabled = device != null
         share.isEnabled = device != null
         syncAction.isEnabled = device != null && share.isChecked
         showClipboardStatus(pause.isChecked)
@@ -518,7 +534,7 @@ class LinkActivity : ComponentActivity() {
 
     private fun showClipboardStatus(paused: Boolean) {
         clipboardStatus.text = if (paused) {
-            "剪贴板同步已暂停。"
+            "剪贴板收发、记录和键盘预览已暂停。"
         } else {
             "打开键盘时自动同步。系统标记为敏感的内容会跳过。"
         }

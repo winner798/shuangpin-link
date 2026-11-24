@@ -27,32 +27,32 @@ patch:
   # 原生候选窗以 BGR 表示颜色，阴影只绘制在轮廓外。
   preset_color_schemes/shuangpin_link:
     name: 双拼互联 浅色玻璃
-    back_color: 0xfff7ed
-    border_color: 0xf6e7cf
-    shadow_color: 0x21604b24
-    text_color: 0x483016
-    hilited_text_color: 0x613c13
-    hilited_back_color: 0xfff0d6
-    candidate_text_color: 0x483016
-    comment_text_color: 0x79644b
-    label_color: 0x79644b
-    hilited_candidate_back_color: 0xfff0d6
-    hilited_candidate_text_color: 0x613c13
-    hilited_comment_text_color: 0x735836
-    hilited_candidate_label_color: 0x8d6029
+    back_color: 0xf4f1f3f4
+    border_color: 0xcdcac7
+    shadow_color: 0x20000000
+    text_color: 0x272524
+    hilited_text_color: 0x282522
+    hilited_back_color: 0xdedbd7
+    candidate_text_color: 0x272524
+    comment_text_color: 0x5a5957
+    label_color: 0x5a5957
+    hilited_candidate_back_color: 0xdedbd7
+    hilited_candidate_text_color: 0x282522
+    hilited_comment_text_color: 0x514e49
+    hilited_candidate_label_color: 0x4f4b46
   preset_color_schemes/shuangpin_link_dark:
     name: 双拼互联 深色玻璃
-    back_color: 0x26180c
-    border_color: 0x755834
+    back_color: 0xf41c1a19
+    border_color: 0x565554
     shadow_color: 0x46000000
-    text_color: 0xfff7ea
-    hilited_text_color: 0xfff7ea
-    hilited_back_color: 0x63451e
-    candidate_text_color: 0xfff7ea
-    comment_text_color: 0xdac6aa
-    label_color: 0xdac6aa
-    hilited_candidate_back_color: 0x63451e
-    hilited_candidate_text_color: 0xfff7ea
-    hilited_comment_text_color: 0xeedebc
-    hilited_candidate_label_color: 0xffcf82
+    text_color: 0xeff3f4
+    hilited_text_color: 0xeff3f4
+    hilited_back_color: 0x454444
+    candidate_text_color: 0xeff3f4
+    comment_text_color: 0xb9bbbf
+    label_color: 0xb9bbbf
+    hilited_candidate_back_color: 0x454444
+    hilited_candidate_text_color: 0xeff3f4
+    hilited_comment_text_color: 0xd4d7da
+    hilited_candidate_label_color: 0xdcdfe1
 

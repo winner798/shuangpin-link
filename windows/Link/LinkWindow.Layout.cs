@@ -67,6 +67,7 @@ internal sealed partial class LinkWindow
         StyleCheck(englishCorrection);
         StyleCheck(share);
         StyleCheck(pause);
+        StyleCheck(recordHistory);
 
         var trial = new TextBox { ImeMode = ImeMode.NoControl };
         var modes = new TableLayoutPanel { ColumnCount = 2, RowCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill };
@@ -92,7 +93,9 @@ internal sealed partial class LinkWindow
             Card("连接服务器", connectionStatus, Copy("服务器地址"), Input(server, "服务器地址"),
                 Copy("服务器启用码"), Input(setupCode, "服务器启用码"), Actions(ActionButton("启用或恢复", Connect, primary: true))),
             Card("手机配对", Actions(ActionButton("显示配对码", Invite, primary: true), ActionButton("解除手机配对", ResetPeer)), qrBox),
-            Card("剪贴板", Copy("配对后自动加密收发纯文字。带系统隐私标记的内容会被跳过。"), pause));
+            Card("剪贴板", Copy("配对后自动加密收发纯文字。带系统隐私标记的内容会被跳过。"), pause, recordHistory,
+                Copy("本机加密保存最近 7 天、最多 50 条。暂停同步时也会暂停收录。"),
+                Actions(ActionButton("查看剪贴板历史", ShowHistory))));
 
         updateStatus.ForeColor = Glass.Muted;
         StyleButton(checkUpdate, primary: true);

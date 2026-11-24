@@ -57,6 +57,9 @@ jobs:
       - name: Install and type through the Windows input service
         shell: pwsh
         run: ./scripts/smoke-windows-ime.ps1 -Installer dist/windows/ShuangpinLinkSetup.exe -OutputDirectory .build/windows-ime-smoke -Isolated -LegacyProfile
+      - name: Verify offline prediction, initialisms and email completion
+        if: ${{ !inputs.windows_build_run }}
+        run: python -X utf8 -B tests/smoke_rime_habits.py --dll .build/windows-native/rime.dll --shared .build/windows-native/data
       - uses: actions/upload-artifact@v4
         if: always()
         with:

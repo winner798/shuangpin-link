@@ -70,12 +70,16 @@ inline std::wstring CorrectedWord(std::wstring_view word) {
   return {};
 }
 
-inline bool IsPlainText(ITfContext* context, ITfRange* range, TfEditCookie edit) {
+inline bool PasswordControl(HWND focus) {
   wchar_t name[24]{};
-  HWND focus = GetFocus();
-  if (focus && GetClassNameW(focus, name, ARRAYSIZE(name)) &&
+  return focus && GetClassNameW(focus, name, ARRAYSIZE(name)) &&
       (_wcsicmp(name, L"Edit") == 0 || _wcsnicmp(name, L"RichEdit", 8) == 0) &&
-      (GetWindowLongPtrW(focus, GWL_STYLE) & ES_PASSWORD))
+      (GetWindowLongPtrW(focus, GWL_STYLE) & ES_PASSWORD);
+}
+
+inline bool IsPlainText(ITfContext* context, ITfRange* range, TfEditCookie edit,
+                        bool forLearning = false) {
+  if (PasswordControl(GetFocus()))
     return false;
 
   // GUID_PROP_INPUTSCOPE is published by the Windows SDK. Resolve it without
@@ -98,9 +102,14 @@ inline bool IsPlainText(ITfContext* context, ITfRange* range, TfEditCookie edit)
   if (FAILED(scope->GetInputScopes(&kinds, &count)))
     return false;
   bool text = true;
-  for (UINT index = 0; index < count; ++index) {
-    if (kinds[index] != IS_DEFAULT && kinds[index] != IS_TEXT && kinds[index] != IS_CHAT)
-      text = false;
+  for (UINT index = 0; index < count && text; ++index) {
+    const auto kind = kinds[index];
+    if (forLearning) {
+      text = kind != IS_PRIVATE && kind != IS_PASSWORD && kind != IS_NUMERIC_PASSWORD &&
+             kind != IS_NUMERIC_PIN && kind != IS_ALPHANUMERIC_PIN && kind != IS_ALPHANUMERIC_PIN_SET;
+    } else {
+      text = kind == IS_DEFAULT || kind == IS_TEXT || kind == IS_CHAT;
+    }
   }
   CoTaskMemFree(kinds);
   return text;

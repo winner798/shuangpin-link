@@ -1,6 +1,10 @@
 package com.osfans.trime.link
 
 import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.inputmethodservice.InputMethodService
 import android.os.PowerManager
@@ -35,7 +39,7 @@ internal fun sensitiveEditor(info: EditorInfo?): Boolean {
     }
 }
 
-internal class ClipboardLink(ime: InputMethodService, private val scope: CoroutineScope, private val rime: RimeSession) {
+internal class ClipboardLink(private val ime: InputMethodService, private val scope: CoroutineScope, private val rime: RimeSession) {
     private val settings = LinkSettings(ime)
     private val dictionaryLock = Mutex()
     private var dictionaryJob: Job? = null
@@ -44,14 +48,27 @@ internal class ClipboardLink(ime: InputMethodService, private val scope: Corouti
     private var inputViewActive = false
     private val power = ime.getSystemService(PowerManager::class.java)
     private val keyguard = ime.getSystemService(KeyguardManager::class.java)
-    private val clipboard = LinkClipboard(ime, settings, scope) {
+    private val safeFocus = {
         val editor = ime.currentInputEditorInfo
         inputViewActive && ime.isInputViewShown && ime.currentInputConnection != null &&
             editor != null && editor.inputType != InputType.TYPE_NULL && !sensitiveEditor(editor) &&
             power?.isInteractive == true && keyguard?.isDeviceLocked == false
     }
+    val history = LinkHistory(ime, settings, scope, safeFocus)
+    private val clipboard = LinkClipboard(ime, settings, scope, history, safeFocus)
+    private val screenLock = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    protectHistory("historyLock", true)
+                    suspendClipboard()
+                }
+                Intent.ACTION_USER_PRESENT -> protectHistory("historyLock", false)
+            }
+        }
+    }
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "device" || key == "paused") {
+        if (key == "device" || key == "paused" || key == "history") {
             clipboard.stop()
             clipboard.start()
         }
@@ -62,6 +79,8 @@ internal class ClipboardLink(ime: InputMethodService, private val scope: Corouti
     fun start() {
         if (registered || !settings.unlocked) return
         registered = true
+        ime.registerReceiver(screenLock, IntentFilter(Intent.ACTION_SCREEN_OFF).apply { addAction(Intent.ACTION_USER_PRESENT) })
+        if (keyguard?.isDeviceLocked != false || power?.isInteractive != true) protectHistory("historyLock", true)
         settings.prefs.registerOnSharedPreferenceChangeListener(preferenceListener)
         refreshDictionarySync()
     }
@@ -74,6 +93,7 @@ internal class ClipboardLink(ime: InputMethodService, private val scope: Corouti
     private fun updateEditorPrivacy(info: EditorInfo?) {
         val wasSensitive = sensitive
         sensitive = sensitiveEditor(info)
+        if (info != null) protectHistory("historyPrivateEditor", sensitive)
         if (!registered) start()
         else if (wasSensitive != sensitive) refreshDictionarySync()
     }
@@ -81,10 +101,19 @@ internal class ClipboardLink(ime: InputMethodService, private val scope: Corouti
     fun resume(info: EditorInfo?) {
         updateEditorPrivacy(info)
         inputViewActive = true
-        clipboard.start()
+        windowShown()
     }
 
-    fun windowShown() = clipboard.start()
+    private fun protectHistory(key: String, protected: Boolean) {
+        if (!settings.unlocked || settings.prefs.getBoolean(key, false) == protected) return
+        // Persist both ends of a private interval so process death cannot resurrect a clip from it.
+        settings.prefs.edit().putBoolean(key, protected).putLong("historyAfter", System.currentTimeMillis()).commit()
+    }
+
+    fun windowShown() {
+        if (keyguard?.isDeviceLocked == false && power?.isInteractive == true) protectHistory("historyLock", false)
+        clipboard.start()
+    }
 
     fun suspendClipboard() {
         inputViewActive = false
@@ -94,7 +123,11 @@ internal class ClipboardLink(ime: InputMethodService, private val scope: Corouti
     fun close() {
         suspendClipboard()
         dictionaryJob?.cancel()
-        if (registered) settings.prefs.unregisterOnSharedPreferenceChangeListener(preferenceListener)
+        if (registered) {
+            ime.unregisterReceiver(screenLock)
+            settings.prefs.unregisterOnSharedPreferenceChangeListener(preferenceListener)
+            registered = false
+        }
     }
 
     private fun refreshDictionarySync() {

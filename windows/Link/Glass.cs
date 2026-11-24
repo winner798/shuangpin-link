@@ -12,13 +12,13 @@ internal static class Glass
         ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw;
     static readonly bool PressMotion = !Contrast && SystemParametersInfoW(0x1042, 0, out int animation, 0) && animation != 0;
 
-    internal static Color Surface => Token(0xEDF7FF, 0x0C1826, SystemColors.Control);
-    internal static Color Ink => Token(0x163048, 0xEAF7FF, SystemColors.WindowText);
-    internal static Color Muted => Token(0x4B6479, 0xAAC6DA, SystemColors.WindowText);
-    internal static Color AccentText => Token(0x165A8E, 0x9AD9FF, SystemColors.WindowText);
-    internal static Color Tint => Token(0xD6F0FF, 0x1E4563, SystemColors.Control);
-    internal static Color Field => Token(0xF7FCFF, 0x132C43, SystemColors.Window);
-    internal static Color Border => Token(0xCFE7F6, 0x345875, SystemColors.WindowText);
+    internal static Color Surface => Token(0xF4F3F1, 0x191A1C, SystemColors.Control);
+    internal static Color Ink => Token(0x242527, 0xF4F3EF, SystemColors.WindowText);
+    internal static Color Muted => Token(0x5C5B59, 0xBDBBB7, SystemColors.WindowText);
+    internal static Color AccentText => Token(0x4B4741, 0xE1DED8, SystemColors.WindowText);
+    internal static Color Tint => Token(0xE6E4DF, 0x474747, SystemColors.Control);
+    internal static Color Field => Token(0xFCFBF9, 0x292A2C, SystemColors.Window);
+    internal static Color Border => Token(0xC7C6C2, 0x535354, SystemColors.WindowText);
 
     static bool UsesDarkTheme()
     {
@@ -48,7 +48,7 @@ internal static class Glass
     internal static void PaintBackdrop(Graphics graphics, Rectangle bounds, bool header)
     {
         if (bounds.Width < 1 || bounds.Height < 1) return;
-        Color start = header ? Token(0xF5FCFF, 0x1A3C57, Surface) : Token(0xF2FAFF, 0x102638, Surface);
+        Color start = header ? Token(0xFEFDFC, 0x363637, Surface) : Token(0xF9F8F6, 0x27282A, Surface);
         using var wash = new LinearGradientBrush(bounds, start, Surface, 51f);
         graphics.FillRectangle(wash, bounds);
         using var glowShape = new GraphicsPath();
@@ -56,14 +56,14 @@ internal static class Glass
         using var glow = new PathGradientBrush(glowShape)
         {
             CenterPoint = new PointF(bounds.Width * .16f, bounds.Height * .1f),
-            CenterColor = Color.FromArgb(Dark ? 28 : 80, Rgb(0x82CFFF)),
+            CenterColor = Color.FromArgb(Dark ? 28 : 80, Rgb(0xD8D7D2)),
             SurroundColors = [Color.Transparent],
         };
         graphics.FillRectangle(glow, bounds);
     }
 
     internal static void PaintCard(Control control, Graphics graphics) => PaintShape(graphics, Inside(control), Dp(control, 22),
-        Token(0xF9FDFF, 0x1A354E, Field), Token(0xEAF6FD, 0x12273A, Field), Border);
+        Color.FromArgb(185, Token(0xFFFEFD, 0x363638, Field)), Color.FromArgb(160, Token(0xEAE9E6, 0x242527, Field)), Border);
 
     internal static void PaintField(Control control, Graphics graphics, bool focused) => PaintShape(graphics, Inside(control), Dp(control, 12),
         Field, Field, focused ? AccentText : Border);
@@ -72,16 +72,16 @@ internal static class Glass
     {
         bool hover = button.Enabled && button.ClientRectangle.Contains(button.PointToClient(Cursor.Position));
         bool pressed = hover && button.Capture && (Control.MouseButtons & MouseButtons.Left) != 0;
-        Color top = prominent ? Rgb(0xB3E6FF) : Token(0xF8FCFF, 0x1E405D, Field);
-        Color bottom = prominent ? Rgb(0x82CFFF) : Token(0xE1F1FA, 0x18334B, Tint);
-        if (hover) bottom = prominent ? Rgb(0x9ADFFF) : Tint;
-        if (pressed) bottom = prominent ? Rgb(0x68B9EA) : Token(0xC7E5F6, 0x2A5372, Tint);
+        Color top = prominent ? Rgb(0xF5F4F0) : Token(0xFFFFFF, 0x404042, Field);
+        Color bottom = prominent ? Rgb(0xD8D7D2) : Token(0xEDECE9, 0x303133, Tint);
+        if (hover) bottom = prominent ? Rgb(0xE7E6E1) : Tint;
+        if (pressed) bottom = prominent ? Rgb(0xC6C5BE) : Token(0xD9D8D4, 0x535355, Tint);
         var bounds = Inside(button);
         if (pressed && PressMotion) bounds.Inflate(-bounds.Width * .023f, -bounds.Height * .023f);
         PaintShape(graphics, bounds, Dp(button, 14), top, bottom,
-            focused ? AccentText : prominent ? Rgb(0x77B9E4) : Border);
+            focused ? AccentText : prominent ? Rgb(0xA7A69F) : Border);
 
-        Color text = !button.Enabled ? Muted : prominent ? Rgb(0x153654) : Ink;
+        Color text = !button.Enabled ? Muted : prominent ? Rgb(0x242527) : Ink;
         var textBounds = Rectangle.Round(bounds);
         textBounds.Inflate(-(int)Dp(button, 5), 0);
         var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
@@ -137,11 +137,11 @@ internal static class Glass
     {
         float size = Dp(button, 15);
         var box = new RectangleF(1.5f, (button.Height - size) / 2, size, size);
-        Color fill = button.Checked && button.Enabled ? Rgb(0x82CFFF) : Field;
+        Color fill = button.Checked && button.Enabled ? Rgb(0xD8D7D2) : Field;
         PaintShape(graphics, box, Dp(button, 4), fill, fill, button.Checked ? AccentText : Border);
         if (button.Checked)
         {
-            using var check = new Pen(button.Enabled ? Rgb(0x153654) : Muted, Dp(button, 1.6f))
+            using var check = new Pen(button.Enabled ? Rgb(0x242527) : Muted, Dp(button, 1.6f))
                 { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
             var smoothing = graphics.SmoothingMode;
             graphics.SmoothingMode = SmoothingMode.AntiAlias;

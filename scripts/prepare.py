@@ -69,6 +69,33 @@ def download(name, url):
             time.sleep(2 ** attempt)
 
 
+def write_initials_index(source, destination):
+    # A small index makes common initialisms visible even when MSPY reads the same keys
+    # as an exact syllable. The spelling algebra handles mixed and less common readings.
+    choices = {}
+    with source.open(encoding="utf-8") as entries:
+        for line in entries:
+            fields = line.rstrip().split("\t")
+            if len(fields) != 3 or not fields[2].isdigit():
+                continue
+            word, reading, weight = fields
+            syllables = reading.split()
+            if not 2 <= len(syllables) <= 8 or not re.fullmatch(r"[\u3400-\u9fff]+", word):
+                continue
+            score = int(weight)
+            if score < (1000 if len(syllables) == 2 else 30000):
+                continue
+            code = "".join(s[0] for s in syllables)
+            if not re.fullmatch("[a-z]+", code):
+                continue
+            top = choices.setdefault(code, [])
+            top.append((score, word))
+            top.sort(reverse=True)
+            del top[3:]
+    lines = [f'  ["{key}"] = "{" ".join(w for _, w in top)}",' for key, top in sorted(choices.items())]
+    destination.write_text("return {\n" + "\n".join(lines) + "\n}\n", encoding="utf-8")
+
+
 def copy_rime(destination, windows=False):
     src = checkout("rime-ice", "https://github.com/iDvel/rime-ice.git", ICE_REV, ICE_REV)
     destination.mkdir(parents=True, exist_ok=True)
@@ -107,16 +134,21 @@ def copy_rime(destination, windows=False):
         text = re.sub(r"(?m)^  - name: traditionalization[^\n]*\n    states:[^\n]*\n", "", text)
         text = text.replace("switches:\n", "switches:\n  - name: simplification\n    reset: 1\n"
                             "  - name: prediction\n    states: [联想关, 联想开]\n    reset: 1\n", 1)
-        text = text.replace("  processors:\n", "  processors:\n    - predictor\n", 1)
-        text = text.replace("  translators:\n", "  translators:\n    - predict_translator\n", 1)
+        text = text.replace("  processors:\n", "  processors:\n    - lua_processor@*link_keys\n    - predictor\n", 1)
+        text = text.replace("  segmentors:\n", "  segmentors:\n    - lua_segmentor@*link_segments\n", 1)
+        text = text.replace("  translators:\n", "  translators:\n    - lua_translator@*link_completions\n    - predict_translator\n", 1)
         text = re.sub(r"(?m)^    - simplifier@traditionalize[^\n]*\n", "", text)
         text = re.sub(r"(?m)^    - uniquifier",
-                      "    - simplifier@link_simplified\n    - lua_filter@*link_words\n    - uniquifier", text, count=1)
+                      "    - lua_filter@*link_initials\n    - simplifier@link_simplified\n    - lua_filter@*link_words\n    - uniquifier", text, count=1)
         algebra = re.search(r"(?m)^  algebra:\n(?P<rules>(?:[ \t]+[^\n]*\n|#[^\n]*\n|\n)*)", text)
         if not algebra:
             raise RuntimeError(f"Missing spelling rules in {schema_id}")
         exact = [line.strip().removeprefix("- ") for line in algebra["rules"].splitlines()
                  if line.lstrip().startswith("- ")]
+        if schema_id == "double_pinyin_mspy":
+            # Keep ordinary pinyin initials (zhong -> z) as well as the MSPY onset key (zhong -> v).
+            exact.insert(1, "abbrev/^([a-z]).+$/$1/")
+            exact.append("abbrev/^([a-z]).+$/$1/")
         # Preserve order and native Rime penalties. The new alternatives are evaluated on full syllables.
         fuzzy = ["fuzz/eng$/en/", "fuzz/en$/eng/", "fuzz/ing$/in/", "fuzz/in$/ing/"]
         for name, rules in (("exact", exact), ("fuzzy", fuzzy + exact)):
@@ -128,7 +160,9 @@ def copy_rime(destination, windows=False):
         schema.write_text(text, encoding="utf-8")
     (destination / "link_spellings.yaml").write_text("\n".join(spelling_sets), encoding="utf-8")
     shutil.copyfile(ROOT / "rime/link_profile.yaml", destination / "link_profile.yaml")
-    shutil.copyfile(ROOT / "rime/link_words.lua", destination / "lua/link_words.lua")
+    for script in (ROOT / "rime").glob("link_*.lua"):
+        shutil.copyfile(script, destination / "lua" / script.name)
+    write_initials_index(src / "cn_dicts/base.dict.yaml", destination / "lua/link_initials_data.lua")
     if not windows:
         shutil.copyfile(ROOT / "rime/english_corrections.tsv", destination / "english_corrections.tsv")
     shutil.copyfile(download("predict.db", "https://github.com/rime/librime-predict/releases/download/data-1.0/predict.db"),
@@ -321,10 +355,22 @@ def prepare_android():
          '        <activity android:name=".link.LinkActivity" android:exported="false" />'),
     ])
     restrict_android_schemes(java)
+    change(java / "core/data/UserDataManager.kt", [
+        ('            val allPaths = (localMap.keys + remoteMap.keys + oldManifest.files.keys)',
+         '            val allPaths = (localMap.keys + remoteMap.keys + oldManifest.files.keys)\n'
+         '                .filterNot { it == "link_habits" || it.startsWith("link_habits/") }'),
+    ])
+    change(java / "core/Rime.kt", [
+        ("        val schemaConfigChanged = UserDataManager.ensureDefaultCustomConfig()",
+         '        java.io.File(UserDataManager.userDataDir, "link_habits").mkdirs()\n'
+         '        val schemaConfigChanged = UserDataManager.ensureDefaultCustomConfig()'),
+    ])
     change(java / "core/RimeApi.kt", [
         ("    suspend fun syncUserData(): Boolean", "    suspend fun clearLinkedDictionary()\n    suspend fun syncUserData(): Boolean"),
     ])
-    change(java / "core/Rime.kt", [
+    rime_file = java / "core/Rime.kt"
+    if "override suspend fun clearLinkedDictionary()" not in rime_file.read_text(encoding="utf-8"):
+        change(rime_file, [
         ("    override suspend fun syncUserData(): Boolean = lock.withLock {",
          """    override suspend fun clearLinkedDictionary(): Unit = lock.withLock {
         withRimeContext {
@@ -345,6 +391,12 @@ def prepare_android():
     }
 
     override suspend fun syncUserData(): Boolean = lock.withLock {"""),
+        ])
+    change(rime_file, [
+        ('                val database = java.io.File(user, "rime_ice.userdb")',
+         '                val habits = java.io.File(user, "link_habits")\n'
+         '                check(!habits.exists() || habits.deleteRecursively())\n'
+         '                val database = java.io.File(user, "rime_ice.userdb")'),
     ])
     service = java / "ime/core/TrimeInputMethodService.kt"
     change(service, [
@@ -374,6 +426,13 @@ def prepare_android():
          '        if (privateField || targetKeyboard == ".ascii" || targetKeyboard == "number") {'),
     ])
     runpy.run_path(str(ROOT / "android/apply_design.py"))["apply_design"](src, assets)
+    change(service, [
+        ("            setNullInputType(isNullType)", '''            val privateField = isNullType || com.osfans.trime.link.sensitiveEditor(attribute)
+            setRuntimeOption("link_private", privateField)
+            setRuntimeOption("incognito_mode", privateField)
+            setRuntimeOption("link_new_editor", !getRuntimeOption("link_new_editor"))
+            setNullInputType(isNullType)'''),
+    ])
 
 
 def prepare_windows():

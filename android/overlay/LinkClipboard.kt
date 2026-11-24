@@ -21,12 +21,15 @@ internal class LinkClipboard(
     context: Context,
     private val settings: LinkSettings,
     private val scope: CoroutineScope,
+    private val history: LinkHistory,
     private val hasInputFocus: () -> Boolean,
 ) {
     private val clipboard = requireNotNull(context.getSystemService(ClipboardManager::class.java))
     private val changeListener = ClipboardManager.OnPrimaryClipChangedListener { capture() }
     private var session: Session? = null
     private var sentAt = 0L
+    private var observing = false
+    private var expiryJob: Job? = null
 
     private class Session(val pairing: ClipboardPairing, openedAt: Long) {
         val client = LinkHttp(pairing.device.server, pairing.device.token)
@@ -46,22 +49,45 @@ internal class LinkClipboard(
             stop()
             return
         }
+        if (!observing) {
+            observing = true
+            clipboard.addPrimaryClipChangedListener(changeListener)
+            if (history.enabled) {
+                capture(currentOnly = true)
+                history.refreshOnOpen()
+                expiryJob = scope.launch {
+                    while (isActive) {
+                        delay(60_000)
+                        if (history.enabled) history.refreshIfExpired() else history.hide()
+                    }
+                }
+            }
+        }
         if (session?.let(::isAuthorized) == true) return
-        stop()
+        stopSession()
         val pairing = settings.clipboardPairing() ?: return
         if (!settings.allowsClipboard(pairing.record)) return
         val active = runCatching { Session(pairing, System.currentTimeMillis()) }.getOrNull() ?: return
         session = active
-        // Observe future system copy events. Opening or pairing never reads the current clip.
-        clipboard.addPrimaryClipChangedListener(changeListener)
+        active.privateClip = runCatching { clipboard.primaryClipDescription }.getOrNull()?.let {
+            it.isSensitive() && !it.trustedReceipt()
+        } == true
         active.sendJob = scope.launch { upload(active) }
         active.receiveJob = scope.launch { receive(active) }
     }
 
     fun stop() {
+        history.hide()
+        expiryJob?.cancel()
+        expiryJob = null
+        if (observing) clipboard.removePrimaryClipChangedListener(changeListener)
+        observing = false
+        stopSession()
+    }
+
+    private fun stopSession() {
         val previous = session ?: return
         session = null
-        clipboard.removePrimaryClipChangedListener(changeListener)
         previous.pending = null
         previous.sendJob?.cancel()
         previous.receiveJob?.cancel()
@@ -71,27 +97,45 @@ internal class LinkClipboard(
     private fun isAuthorized(active: Session): Boolean =
         session === active && hasInputFocus() && settings.allowsClipboard(active.pairing.record)
 
-    private fun capture() {
-        val active = session ?: return
-        if (!isAuthorized(active)) return
+    private fun capture(currentOnly: Boolean = false) {
+        if (!observing || !hasInputFocus()) return
+        val active = session?.takeIf { !currentOnly && isAuthorized(it) }
+        if (active == null && !history.enabled) return
         val description = runCatching { clipboard.primaryClipDescription }.getOrNull()
-        if (description != null) {
-            if (description.isRemote() || description.timestamp <= active.lastClipTimestamp) return
-            active.lastClipTimestamp = description.timestamp
+        // Authenticated incoming items are recorded by receivePacket, never by an OS label.
+        if (description?.isRemote() == true) {
+            val receipt = description.trustedReceipt()
+            if (active != null && !receipt) {
+                active.localChange++
+                active.pending = null
+                active.privateClip = description.isSensitive()
+            }
+            if (currentOnly && receipt) history.showRecordedPreview(description.timestamp)
+            else if (!receipt) history.hidePreview()
+            return
         }
-        active.localChange++
-        active.pending = null
-        active.privateClip = description?.isSensitive() == true
-        if (description == null || active.privateClip) return
+        val canSend = active != null && (description == null || description.timestamp > active.lastClipTimestamp)
+        if (active != null && canSend) {
+            if (description != null) active.lastClipTimestamp = description.timestamp
+            active.localChange++
+            active.pending = null
+            active.privateClip = description?.isSensitive() == true
+        }
+        history.hidePreview()
+        if (description == null || description.isSensitive() || (!history.enabled && !canSend)) return
+        if (currentOnly && (System.currentTimeMillis() - description.timestamp !in 0L..3_600_000L ||
+                description.timestamp <= settings.prefs.getLong("historyAfter", 0))) return
         val clip = runCatching { clipboard.primaryClip }.getOrNull() ?: return
         val current = clip.description
-        if (current.isSensitive()) active.privateClip = !current.isRemote()
+        if (current.isSensitive() && active != null) active.privateClip = !current.trustedReceipt()
         if (current.timestamp != description.timestamp || current.isSensitive() || current.isRemote() || clip.itemCount != 1) return
         val item = clip.getItemAt(0)
         val text = item.text?.toString() ?: item.uri?.takeIf { it.scheme == "https" || it.scheme == "http" }?.toString()
         if (text.isNullOrEmpty() || text.length > CLIP_LIMIT) return
         val bytes = text.toByteArray(Charsets.UTF_8)
         if (bytes.size > CLIP_LIMIT) return
+        history.accept(text, description.timestamp)
+        if (active == null || !canSend) return
         sentAt = maxOf(System.currentTimeMillis(), sentAt + 1)
         if (!ClipboardCodec.isFresh(sentAt)) return
         val id = UUID.randomUUID().toString().replace("-", "")
@@ -121,7 +165,7 @@ internal class LinkClipboard(
                 delay(1_500)
             }
         }
-        if (session === active) stop()
+        if (session === active) stopSession()
     }
 
     private suspend fun receive(active: Session) {
@@ -149,7 +193,7 @@ internal class LinkClipboard(
                 delay(1_500)
             }
         }
-        if (session === active) stop()
+        if (session === active) stopSession()
     }
 
     private fun receivePacket(active: Session, data: JSONObject) {
@@ -164,17 +208,32 @@ internal class LinkClipboard(
         // Persist the authenticated high-water mark before exposing the data to the OS.
         if (!settings.recordClipboardReceipt(active.pairing.record, at)) return
         val clip = ClipData.newPlainText(REMOTE_LABEL, text)
-        clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+        clip.description.extras = PersistableBundle().apply {
+            putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            putString(RECEIPT, id)
+        }
         clipboard.setPrimaryClip(clip)
+        val stored = runCatching { clipboard.primaryClipDescription }.getOrNull()
+        val marked = stored?.takeIf { it.isRemote() && it.isSensitive() && it.extras?.getString(RECEIPT) == id }
+        if (marked != null) {
+            settings.prefs.edit().putString(RECEIPT, id).putLong("historyReceiptTime", marked.timestamp).apply()
+        }
+        history.accept(text, marked?.timestamp ?: System.currentTimeMillis())
     }
 
     private fun credentialsRejected(active: Session, error: Exception): Boolean {
         if (error !is LinkHttpError || (error.code != 401 && error.code != 409)) return false
-        if (session === active) stop()
+        if (session === active) stopSession()
         return true
     }
 
     private fun ClipDescription.isRemote() = label?.toString() == REMOTE_LABEL
+
+    private fun ClipDescription.trustedReceipt(): Boolean {
+        val id = extras?.getString(RECEIPT) ?: return false
+        return isRemote() && isSensitive() && id == settings.prefs.getString(RECEIPT, null) &&
+            timestamp > 0L && timestamp == settings.prefs.getLong("historyReceiptTime", 0)
+    }
 
     private fun ClipDescription.isSensitive() = extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false) == true
 
@@ -186,6 +245,7 @@ internal class LinkClipboard(
     companion object {
         private const val RESPONSE_LIMIT = (CLIP_LIMIT + 128) * 4 / 3 + 256
         private const val LEGACY_DB = "clipboard.db"
+        private const val RECEIPT = "io.github.winner798.shuangpinlink.RECEIPT"
 
         fun hasLegacyHistory(context: Context): Boolean = storageContexts(context).any { storage ->
             val db = storage.getDatabasePath(LEGACY_DB)

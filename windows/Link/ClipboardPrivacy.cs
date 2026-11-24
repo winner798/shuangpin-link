@@ -13,6 +13,7 @@ internal sealed partial class LinkWindow
     Task clipboardWorkers = Task.CompletedTask;
     OutgoingClip? clipboardPending;
     uint lastClipboardSequence;
+    uint syncBaseline;
     long lastClipboardSentAt;
     bool clipboardPeerReady;
     bool changingClipboardPair;
@@ -21,17 +22,35 @@ internal sealed partial class LinkWindow
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        lastClipboardSequence = PrivateClipboard.Sequence;
+        WTSRegisterSessionNotification(Handle, 0);
         AddClipboardFormatListener(Handle);
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
+        WTSUnRegisterSessionNotification(Handle);
         RemoveClipboardFormatListener(Handle);
         base.OnHandleDestroyed(e);
     }
 
     protected override void WndProc(ref Message message)
     {
+        if (message.Msg == 0x02B1)
+        {
+            if (message.WParam == 7) // WTS_SESSION_LOCK
+            {
+                sessionLocked = true;
+                historyWindow?.Close();
+                StopClipboard();
+            }
+            else if (message.WParam == 8)
+            {
+                sessionLocked = false;
+                lastClipboardSequence = PrivateClipboard.Sequence;
+                RestartClipboard();
+            }
+        }
         if (message.Msg == 0x031D) CaptureClipboard();
         base.WndProc(ref message);
     }
@@ -39,8 +58,8 @@ internal sealed partial class LinkWindow
     void RestartClipboard()
     {
         StopClipboard();
-        lastClipboardSequence = PrivateClipboard.Sequence;
-        if (session is not { Paused: false } device || changingClipboardPair || IsDisposed || exiting) return;
+        syncBaseline = PrivateClipboard.Sequence;
+        if (sessionLocked || session is not { Paused: false } device || changingClipboardPair || IsDisposed || exiting) return;
         var relay = new Relay(device.Server, device.Device.Token);
         clipboardLink = new CancellationTokenSource();
         var token = clipboardLink.Token;
@@ -69,12 +88,12 @@ internal sealed partial class LinkWindow
 
     void CaptureClipboard()
     {
-        if (!clipboardPeerReady || clipboardLink is not { IsCancellationRequested: false }
-            || session is not { Paused: false } device) return;
         uint sequence = PrivateClipboard.Sequence;
         if (sequence == lastClipboardSequence) return;
         lastClipboardSequence = sequence;
         clipboardPending = null;
+        bool send = clipboardPeerReady && clipboardLink is { IsCancellationRequested: false } && sequence != syncBaseline;
+        if ((!CanRecordHistory && !send) || !InteractiveDesktop()) return;
         try
         {
             var clipboard = Clipboard.GetDataObject();
@@ -83,6 +102,8 @@ internal sealed partial class LinkWindow
                 || text.Contains('\0') || ClipEncoding.GetByteCount(text) > ClipboardWire.TextLimit
                 || sequence != PrivateClipboard.Sequence) return;
 
+            _ = AddHistory(text);
+            if (!send || session is not { Paused: false } device) return;
             long sentAt = Math.Max(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), lastClipboardSentAt + 1);
             string id = Guid.NewGuid().ToString("N");
             byte[] bytes = ClipEncoding.GetBytes(text);
@@ -142,7 +163,7 @@ internal sealed partial class LinkWindow
                 if (!clipboardPeerReady)
                 {
                     // A copy made before the relay confirms both devices is a local-only copy.
-                    lastClipboardSequence = PrivateClipboard.Sequence;
+                    syncBaseline = PrivateClipboard.Sequence;
                     clipboardPeerReady = true;
                 }
                 connectionStatus.Text = "已配对 · 加密剪贴板在线";
@@ -179,11 +200,14 @@ internal sealed partial class LinkWindow
             string text = ClipEncoding.GetString(plain);
             if (text.Contains('\0')) throw new InvalidDataException("剪贴板文字格式无效。");
             token.ThrowIfCancellationRequested();
-            if (sequence != PrivateClipboard.Sequence) return;
+            if (sequence != PrivateClipboard.Sequence || !InteractiveDesktop()) return;
             session = active with { AcceptedClipboardTime = clip.SentAt };
             SaveSession();
             if (PrivateClipboard.Write(Handle, sequence, text))
+            {
                 lastClipboardSequence = PrivateClipboard.Sequence;
+                _ = AddHistory(text);
+            }
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }

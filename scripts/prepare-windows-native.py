@@ -96,6 +96,30 @@ fs::path WeaselUserDataPath() {
     replace(handler, 'rime.weasel', 'rime.shuangpin_link', expected=8)
     replace(handler, '"weasel"', '"shuangpin_link"', expected=3)
     replace(handler, 'WeaselDeployerMutex', 'ShuangpinLinkDeployerMutex')
+    replace(handler, '  rime_api->initialize(NULL);',
+            '  std::error_code directoryError;\n'
+            '  std::filesystem::create_directories(WeaselUserDataPath() / L"link_habits", directoryError);\n'
+            '  rime_api->initialize(NULL);')
+
+    # The focus message already carries one DWORD. Pass the field privacy state with
+    # that message before processing the first key in each document or control.
+    for path in (source / 'include/WeaselIPC.h', source / 'WeaselIPC/WeaselClientImpl.h'):
+        replace(path, '  void FocusIn();', '  void FocusIn(DWORD privateField = 1);')
+    client = source / 'WeaselIPC/WeaselClientImpl.cpp'
+    replace(client, 'void Client::FocusIn() {\n  m_pImpl->FocusIn();',
+            'void Client::FocusIn(DWORD privateField) {\n  m_pImpl->FocusIn(privateField);')
+    replace(client, 'void ClientImpl::FocusIn() {\n  DWORD client_caps = 0; /* TODO */',
+            'void ClientImpl::FocusIn(DWORD client_caps) {')
+    focus_head = 'void RimeWithWeaselHandler::FocusIn(DWORD client_caps, WeaselSessionId ipc_id) {'
+    replace_pattern(handler, '(?s)' + re.escape(focus_head) + r'.*?if \(m_disabled\)\s*return;',
+                    lambda m: m[0] + '''
+  const auto session = to_session_id(ipc_id);
+  if (session) {
+    rime_api->clear_composition(session);
+    rime_api->set_option(session, "link_private", client_caps != 0);
+    rime_api->set_option(session, "incognito_mode", client_caps != 0);
+    rime_api->set_option(session, "link_new_editor", !rime_api->get_option(session, "link_new_editor"));
+  }''')
 
     tsf = source / 'WeaselTSF'
     shutil.copyfile(native / 'EnglishCorrection.h', tsf / 'EnglishCorrection.h')
@@ -110,7 +134,35 @@ fs::path WeaselUserDataPath() {
         + ''.join(f'  {{L"{typo}", L"{spelling}"}},\n' for typo, spelling in entries) + '};\n',
         encoding='ascii')
     key_events = tsf / 'KeyEventSink.cpp'
-    replace(key_events, '#include "CandidateList.h"', '#include "CandidateList.h"\n#include "EnglishCorrection.h"')
+    shutil.copyfile(native / 'InputContext.h', tsf / 'InputContext.h')
+    replace(key_events, '#include "CandidateList.h"', '#include "CandidateList.h"\n#include "InputContext.h"')
+    replace(tsf / 'WeaselTSF.h', '  weasel::Status _status;', '''  com_ptr<ITfContext> _linkFocusedContext;
+  HWND _linkFocusedWindow = nullptr;
+  bool _linkMasked = false;
+  weasel::Status _status;''')
+    for path in (key_events, tsf / 'WeaselTSF.h'):
+        replace(path, '_ProcessKeyEvent(WPARAM', '_ProcessKeyEvent(ITfContext* context, WPARAM')
+    replace(key_events, '_ProcessKeyEvent(wParam, lParam, pfEaten);',
+            '_ProcessKeyEvent(pContext, wParam, lParam, pfEaten);', expected=4)
+    replace(key_events, '  weasel::KeyEvent ke;', '''  const HWND focus = GetFocus();
+  const bool masked = link_english::PasswordControl(focus);
+  if (!_linkFocusedContext || _linkFocusedContext.p != context || _linkFocusedWindow != focus || _linkMasked != masked) {
+    m_client.FocusIn(LinkPrivateContext(this, context, _tfClientId) ? 1 : 0);
+    _linkFocusedContext = context;
+    _linkFocusedWindow = focus;
+    _linkMasked = masked;
+  }
+  if (masked) {
+    *pfEaten = FALSE;
+    return;
+  }
+  weasel::KeyEvent ke;''')
+    replace(key_events, '  if (fForeground)\n', '  _linkFocusedContext.Release();\n  if (fForeground)\n')
+    replace(tsf / 'ThreadMgrEventSink.cpp', '  _InitTextEditSink(pDocMgrFocus);',
+            '  if (pDocMgrFocus != pDocMgrPrevFocus) _linkFocusedContext.Release();\n'
+            '  _InitTextEditSink(pDocMgrFocus);')
+    replace(tsf / 'WeaselTSF.cpp', '  m_client.StartSession();',
+            '  m_client.StartSession();\n  _linkFocusedContext.Release();')
     for test in (True, False):
         action = 'OnTestKeyDown' if test else 'OnKeyDown'
         # Some TSF hosts only call OnTestKeyDown. Follow the normal input path

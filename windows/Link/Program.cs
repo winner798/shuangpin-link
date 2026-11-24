@@ -90,11 +90,13 @@ internal sealed partial class LinkWindow : Form
         if (session is { } device) server.Text = device.Server;
 
         BuildLayout();
+        ConfigureHistory();
         checkUpdate.Click += async (_, _) => await CheckForUpdates();
         cancelUpdate.Click += (_, _) => updateRequest?.Cancel();
 
         tray.ContextMenuStrip = new ContextMenuStrip();
         tray.ContextMenuStrip.Items.Add("打开设置", null, (_, _) => Reveal());
+        tray.ContextMenuStrip.Items.Add("剪贴板历史", null, async (_, _) => { Reveal(); await ShowHistory(); });
         tray.ContextMenuStrip.Items.Add("检查更新", null, async (_, _) => { Reveal(); updatesTab.Checked = true; await CheckForUpdates(); });
         tray.ContextMenuStrip.Items.Add("暂停或恢复剪贴板互通", null, (_, _) => pause.Checked = !pause.Checked);
         tray.ContextMenuStrip.Items.Add("退出", null, (_, _) => { exiting = true; Close(); });
@@ -214,6 +216,7 @@ internal sealed partial class LinkWindow : Form
         link?.Cancel();
         updateRequest?.Cancel();
         ClearQr();
+        CloseHistory();
         tray.Dispose();
         base.OnFormClosing(e);
     }
@@ -324,7 +327,7 @@ internal sealed partial class LinkWindow : Form
 
     async Task ClearDictionary()
     {
-        if (MessageBox.Show(this, "清空电脑学到的词条和词频，并关闭电脑的词库共享？旧词库会备份在本机。", Text,
+        if (MessageBox.Show(this, "清空电脑学到的词条、词频和连续输入记录，并关闭电脑的词库共享？词库会备份在本机，连续输入记录会删除。", Text,
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         if (session is { } device)
         {

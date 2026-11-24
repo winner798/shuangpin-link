@@ -107,21 +107,22 @@ internal class LinkHttpError(val code: Int) : IOException("HTTP $code")
 internal data class LinkDevice(val server: String, val token: String, val key: String)
 internal data class ClipboardPairing(val record: String, val device: LinkDevice)
 
+@Synchronized
+internal fun localAesKey(alias: String): SecretKey {
+    val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    (store.getKey(alias, null) as? SecretKey)?.let { return it }
+    return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
+        init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256).build())
+        generateKey()
+    }
+}
+
 internal class LinkSettings(context: Context) {
     private val app = context.applicationContext
     val unlocked: Boolean get() = app.getSystemService(UserManager::class.java)?.isUserUnlocked == true
     val prefs get() = app.getSharedPreferences("ime_sync", Context.MODE_PRIVATE)
-
-    private fun wrappingKey(): SecretKey {
-        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
-            init(KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256).build())
-            generateKey()
-        }
-    }
 
     private fun storedDevice() = if (unlocked) prefs.getString("device", null) else null
 
@@ -140,14 +141,14 @@ internal class LinkSettings(context: Context) {
     private fun openDevice(record: String): LinkDevice? = runCatching {
         val data = decode(record)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, wrappingKey(), GCMParameterSpec(128, data, 0, 12))
+        cipher.init(Cipher.DECRYPT_MODE, localAesKey(KEY_ALIAS), GCMParameterSpec(128, data, 0, 12))
         val json = JSONObject(String(cipher.doFinal(data, 12, data.size - 12), Charsets.UTF_8))
         LinkDevice(json.getString("server"), json.getString("token"), json.getString("key"))
     }.getOrNull()
 
     fun save(device: LinkDevice) {
         val json = JSONObject().put("server", device.server).put("token", device.token).put("key", device.key)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, wrappingKey()) }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, localAesKey(KEY_ALIAS)) }
         val record = encode(cipher.iv + cipher.doFinal(json.toString().toByteArray()))
         check(prefs.edit().remove("dictionaryReceived").remove("dictionarySent").remove("clipboardReceivedAtV2")
             .putBoolean("share", true).putString("device", record).commit())

@@ -61,17 +61,38 @@ def apply_design(src, assets):
                '"clipboard_window" -> openLinkClipboard()')
     apply_edit(actions, "                    windowManager.attachWindow(ClipboardWindow(di))",
                "                    openLinkClipboard()")
-    apply_edit(actions, """            private fun handleClipboardWindow(arg: String) {
+    old_clipboard = """            private fun handleClipboardWindow(arg: String) {
                 val tabIndex = arg.toIntOrNull()?.coerceIn(0, 1) ?: 0
                 windowManager.attachWindow(ClipboardWindow(di, tabIndex))
-            }""", """            private fun openLinkClipboard() {
+            }"""
+    if "LinkActivity.openClipboard(service)" in actions.read_text(encoding="utf-8"):
+        old_clipboard = """            private fun openLinkClipboard() {
                 if (com.osfans.trime.link.sensitiveEditor(service.currentInputEditorInfo)) return
                 com.osfans.trime.link.LinkActivity.openClipboard(service)
+            }"""
+    apply_edit(actions, old_clipboard, """            private fun openLinkClipboard() {
+                if (com.osfans.trime.link.sensitiveEditor(service.currentInputEditorInfo)) return
+                windowManager.attachWindow(com.osfans.trime.link.HistoryWindow(di))
             }""")
 
     input_bar = java / "ime/bar/InputBarDelegate.kt"
-    apply_edit(input_bar, "            ClipboardHelper.addOnUpdateListener(onClipboardUpdateListener)",
-               "            // Copied content never appears as an automatic keyboard suggestion.")
+    old_preview = "            ClipboardHelper.addOnUpdateListener(onClipboardUpdateListener)"
+    if "// Copied content never appears" in input_bar.read_text(encoding="utf-8"):
+        old_preview = "            // Copied content never appears as an automatic keyboard suggestion."
+    apply_edit(input_bar, old_preview,
+               """            com.osfans.trime.link.bindHistoryPreview(this, service) { preview ->
+                alwaysUi.clipboardUi.text.text = preview.orEmpty()
+                isClipboardFresh = !preview.isNullOrEmpty()
+                evalAlwaysUiState()
+            }""")
+    apply_edit(input_bar, """                    val content = ClipboardHelper.lastBean?.text
+                    content?.let { service.commitText(it) }
+                    dismissClipboardSuggestion()""", """                    if (service.linkHistory.enabled) windowManager.attachWindow(com.osfans.trime.link.HistoryWindow(di))""")
+    apply_edit(input_bar, """                    ClipboardHelper.lastBean?.let {
+                        AppUtils.launchClipEdit(context, it.id, ClipEditActivity.FROM_CLIPBOARD)
+                    }""", """                    if (service.linkHistory.enabled) {
+                        windowManager.attachWindow(com.osfans.trime.link.HistoryWindow(di))
+                    }""")
 
     theme_manager = java / "data/theme/ThemeManager.kt"
     previous_selection = 'val selectedThemeId = "shuangpin_link"'
@@ -141,6 +162,9 @@ def apply_design(src, assets):
                     if (service.hookKeyboard(keyEventCode, m)) {''')
 
     ime = java / "ime/core/TrimeInputMethodService.kt"
+    apply_edit(ime, "    private lateinit var clipboardLink: com.osfans.trime.link.ClipboardLink",
+               "    private lateinit var clipboardLink: com.osfans.trime.link.ClipboardLink\n"
+               "    internal val linkHistory get() = clipboardLink.history")
     finish_view = "    override fun onFinishInputView(finishingInput: Boolean) {"
     apply_edit(ime, finish_view, """    override fun onWindowShown() {
         super.onWindowShown()

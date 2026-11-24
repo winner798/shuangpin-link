@@ -25,6 +25,11 @@ internal static class Program
     private static int Main(string[] args)
     {
         Console.OutputEncoding = Encoding.UTF8;
+        if (args is ["--check-history", var folder])
+        {
+            HistoryFixture.Run(folder).GetAwaiter().GetResult();
+            return 0;
+        }
         if (args is ["--seed-legacy-tip"] or ["--assert-legacy-tip-hidden"])
             return LegacyTipFixture(seed: args[0] == "--seed-legacy-tip");
         if (args.Length != 2)
@@ -91,7 +96,8 @@ internal static class Program
 
                     await AssertCommit(window, editor, args[0], "nihao", "full-pinyin");
                     await AssertEnglishCorrection(window, editor, args[0]);
-                    AssertClipboardPrivacy(window.Handle);
+                    await HistoryFixture.Run(args[0]);
+                    await AssertClipboardPrivacy(window.Handle);
                     status = 0;
                 }
                 finally
@@ -118,7 +124,7 @@ internal static class Program
     private static object CreateComObject(Guid clsid) =>
         Activator.CreateInstance(Type.GetTypeFromCLSID(clsid, throwOnError: true)!)!;
 
-    private static void AssertClipboardPrivacy(nint window)
+    private static async Task AssertClipboardPrivacy(nint window)
     {
         const string protectedText = "剪贴板隐私测试";
         const string newerText = "本机刚复制的测试文字";
@@ -129,10 +135,21 @@ internal static class Program
                 throw new InvalidOperationException("The synthetic clipboard changed unexpectedly.");
             if (Clipboard.GetText() != protectedText || Clipboard.GetDataObject() is not { } data || !PrivateClipboard.IsProtected(data))
                 throw new InvalidOperationException("The clipboard write did not preserve text and its system privacy marker.");
+            await Task.Delay(300);
             uint beforeLocalCopy = PrivateClipboard.Sequence;
             Clipboard.SetText(newerText);
             if (PrivateClipboard.Write(window, beforeLocalCopy, protectedText) || Clipboard.GetText() != newerText)
                 throw new InvalidOperationException("Receiving text overwrote a newer local clipboard entry.");
+            string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ShuangpinLink", "state", "clipboard-history.bin");
+            await WaitFor(() =>
+            {
+                try { return ClipboardHistory.ReadSnapshot(path).Any(entry => entry.Text == newerText); }
+                catch (IOException) { return false; }
+            }, "The installed tray application did not capture a local copy without pairing.");
+            if (ClipboardHistory.ReadSnapshot(path).Any(entry => entry.Text == protectedText))
+                throw new InvalidOperationException("A privacy-marked copy entered local history.");
+            Console.WriteLine("Unpaired clipboard capture and sensitive copy exclusion verified.");
             Console.WriteLine("Clipboard privacy marker and protection against overwriting a newer copy verified.");
         }
         finally { Clipboard.Clear(); }
@@ -267,6 +284,12 @@ internal static class Program
             }
             SaveScreen(window, output, "english-corrected");
             Console.WriteLine("English mode: teh + Space committed the corrected word in an independent editor.");
+            SendChord(Keys.ShiftKey, Keys.D2);
+            await Task.Delay(180);
+            SendChord(Keys.G);
+            await Task.Delay(180);
+            SendChord(Keys.Tab);
+            await WaitFor(() => editor.Text == "the @gmail.com", "The English email candidate did not complete @g.");
         }
         finally
         {

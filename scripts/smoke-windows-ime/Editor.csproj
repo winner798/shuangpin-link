@@ -8,6 +8,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../windows/Link/ClipboardHistory.cs" Link="ClipboardHistory.cs" />
+    <Compile Include="../../windows/Link/ClipboardWire.cs" Link="ClipboardWire.cs" />
     <Compile Include="../../windows/Link/PrivateClipboard.cs" Link="PrivateClipboard.cs" />
   </ItemGroup>
 </Project>

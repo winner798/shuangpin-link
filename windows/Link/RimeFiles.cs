@@ -75,6 +75,8 @@ internal static class RimeFiles
             Directory.CreateDirectory(backup);
             var directory = Path.Combine(UserDirectory, "rime_ice.userdb");
             if (Directory.Exists(directory)) Directory.Move(directory, Path.Combine(backup, "rime_ice.userdb"));
+            var habits = Path.Combine(UserDirectory, "link_habits");
+            if (Directory.Exists(habits)) Directory.Delete(habits, recursive: true);
             var sync = Path.Combine(UserDirectory, "sync");
             if (Directory.Exists(sync))
             {
