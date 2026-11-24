@@ -6,6 +6,9 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -76,6 +79,9 @@ internal class LinkHttp(server: String, private val token: String) {
         apiVersion: Int = 1,
     ): JSONObject? = withContext(Dispatchers.IO) {
         val conn = connection(method, route, apiVersion)
+        val cancelConnection = if (apiVersion >= 3) launch(start = CoroutineStart.UNDISPATCHED) {
+            try { awaitCancellation() } finally { conn.disconnect() }
+        } else null
         try {
             if (body != null) {
                 val bytes = body.toString().toByteArray()
@@ -100,6 +106,7 @@ internal class LinkHttp(server: String, private val token: String) {
                 else -> throw LinkHttpError(code)
             }
         } finally {
+            cancelConnection?.cancel()
             conn.disconnect()
         }
     }
