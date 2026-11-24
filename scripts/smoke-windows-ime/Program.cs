@@ -92,6 +92,7 @@ internal static class Program
                     await Task.Delay(550);
 
                     await AssertCommit(window, editor, args[0], "nihao", "full-pinyin", Keys.Right);
+                    await AssertPassiveSuggestions(window, editor);
                     await AssertEnglishCorrection(window, editor, args[0]);
                     using (var masked = new TextBox { Dock = DockStyle.Top, UseSystemPasswordChar = true })
                     {
@@ -241,11 +242,7 @@ internal static class Program
         editor.Text = "甲乙丙";
         editor.Select(1, 0);
 
-        foreach (char key in keys)
-        {
-            await SendChord(window, editor, (Keys)char.ToUpperInvariant(key));
-            await Task.Delay(110);
-        }
+        await TypeCode(window, editor, keys);
         await Task.Delay(430);
         SaveScreen(window, output, name + "-candidates");
         await SendChord(window, editor, Keys.Space);
@@ -259,11 +256,7 @@ internal static class Program
         await WaitFor(() => editor.Text == original && editor.SelectionStart == nextCaret
             && editor.SelectionLength == 0 && !CandidateWindowVisible(),
             $"{name} {arrow} did not dismiss suggestions and move the caret exactly once (caret {editor.SelectionStart}).");
-        foreach (char key in keys)
-        {
-            await SendChord(window, editor, (Keys)char.ToUpperInvariant(key));
-            await Task.Delay(80);
-        }
+        await TypeCode(window, editor, keys);
         await SendChord(window, editor, Keys.Space);
         await WaitFor(() => editor.Text == original.Insert(nextCaret, "你好"), $"{name} could not continue Chinese input at the new caret.");
         await SendChord(window, editor, Keys.Escape);
@@ -272,15 +265,76 @@ internal static class Program
         editor.Clear();
     }
 
-    private static bool CandidateWindowVisible()
+    private static async Task TypeCode(Form window, RichTextBox editor, string keys)
+    {
+        foreach (char key in keys)
+        {
+            await SendChord(window, editor, (Keys)char.ToUpperInvariant(key));
+            await Task.Delay(90);
+        }
+    }
+
+    private static async Task AssertPassiveSuggestions(Form window, RichTextBox editor)
+    {
+        const string committed = "甲你好乙";
+        async Task OpenSuggestions()
+        {
+            editor.Text = "甲乙";
+            editor.Select(1, 0);
+            await TypeCode(window, editor, "nihao");
+            await SendChord(window, editor, Keys.Space);
+            await WaitFor(() => editor.Text == committed && editor.SelectionStart == 3 && CandidateWindowVisible(),
+                "Expected a committed greeting and visible continuations.");
+        }
+
+        await OpenSuggestions();
+        await SendChord(window, editor, Keys.Space);
+        await WaitFor(() => editor.Text == "甲你好 乙" && !CandidateWindowVisible(), "Space selected a passive suggestion.");
+
+        await OpenSuggestions();
+        Point caret = editor.GetPositionFromCharIndex(3);
+        ClickAt(editor.PointToScreen(new Point(caret.X + 1, caret.Y + 2)), editor.Handle);
+        await WaitFor(() => editor.Text == committed && !CandidateWindowVisible(), "Clicking inside the editor kept suggestions open.");
+
+        await OpenSuggestions();
+        editor.Select(0, 1);
+        await WaitFor(() => editor.SelectionLength == 1 && !CandidateWindowVisible(), "Changing the host selection kept suggestions open.");
+
+        await OpenSuggestions();
+        var popup = CandidateWindow();
+        if (!GetWindowRect(popup, out var bounds)) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        // The first horizontal candidate is just inside the left padding, beside its selection label.
+        ClickAt(new Point(bounds.Left + 30 * editor.DeviceDpi / 96, (bounds.Top + bounds.Bottom) / 2), popup);
+        await WaitFor(() => editor.Text.StartsWith("甲你好", StringComparison.Ordinal) && editor.Text.EndsWith('乙')
+            && editor.Text.Length > committed.Length && editor.Text[3..^1].All(c => c is >= '\u3400' and <= '\u9fff'),
+            "Clicking a suggested word did not insert it.");
+        await SendChord(window, editor, Keys.Escape);
+        await WaitFor(() => !CandidateWindowVisible(), "The candidate list remained after Escape.");
+        editor.Clear();
+        Console.WriteLine("Verified that a passive suggestion yields to Space, editor clicks and selection changes, and only a candidate click inserts a suggestion.");
+    }
+
+    private static void ClickAt(Point point, nint expectedWindow)
+    {
+        Cursor.Position = point;
+        if (WindowFromPoint(point) != expectedWindow) throw new InvalidOperationException("The target of the isolated test click changed.");
+        var click = new Input[2];
+        click[0].Data.Mouse.Flags = 2;
+        click[1].Data.Mouse.Flags = 4;
+        if (SendInput(2, click, Marshal.SizeOf<Input>()) != 2) throw new Win32Exception(Marshal.GetLastPInvokeError());
+    }
+
+    private static bool CandidateWindowVisible() => CandidateWindow() != 0;
+
+    private static nint CandidateWindow()
     {
         // The installed TSF creates its non-activating tool popup on this editor's UI thread.
         const long candidateStyles = 0x08000000 | 0x00000080 | 0x00000008; // NOACTIVATE | TOOLWINDOW | TOPMOST
-        bool found = false;
+        nint found = 0;
         EnumThreadWindows(GetCurrentThreadId(), (hwnd, _) =>
         {
-            found = IsWindowVisible(hwnd) && (GetWindowLongPtr(hwnd, -20).ToInt64() & candidateStyles) == candidateStyles;
-            return !found;
+            if (IsWindowVisible(hwnd) && (GetWindowLongPtr(hwnd, -20).ToInt64() & candidateStyles) == candidateStyles) found = hwnd;
+            return found == 0;
         }, 0);
         return found;
     }
@@ -464,6 +518,10 @@ internal static class Program
     private static extern bool IsWindowVisible(nint hwnd);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern nint GetWindowLongPtr(nint hwnd, int index);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowBounds { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetWindowRect(nint hwnd, out WindowBounds bounds);
 
     [DllImport("user32.dll")]
     private static extern IntPtr WindowFromPoint(Point point);

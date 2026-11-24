@@ -161,7 +161,7 @@ grep -F 'text="你好"' "$output/android-editor-full-pinyin.xml" >/dev/null
 # Exercise actual hardware direction keys while the on-screen keyboard is showing
 # a post-commit prediction. Keep the existing Chinese scheme selected for both keys.
 adb shell am instrument -w -e scenario arrows "$preview/.HistorySmoke" | tee "$output/android-arrow-navigation.txt"
-grep -F 'Left and Right dismissed predictions and moved the cursor once' "$output/android-arrow-navigation.txt" >/dev/null
+grep -F 'Passive predictions yielded to editor actions and explicit selection worked' "$output/android-arrow-navigation.txt" >/dev/null
 
 # Enable the actual opt-in switch before exercising the on-screen English keys.
 adb shell am force-stop "$preview"

@@ -92,6 +92,23 @@ def run_suite(user):
             api("SetOption", None, Z, S, I)(session, name.encode(), enabled)
         def reset():
             api("ClearComposition", None, Z)(session)
+        def compare_with_idle(spelling, code, modifiers=0):
+            outcomes = []
+            for predict in (False, True):
+                option("prediction", False)
+                reset()
+                option("prediction", predict)
+                type_code(spelling)
+                choose("你好")
+                assert bool(menu()) == predict
+                handled = key(code, modifiers)
+                outcomes.append((handled, commit(), menu()))
+                key(code, modifiers | (1 << 30))
+            assert outcomes[0] == outcomes[1], (code, modifiers, outcomes)
+        def click_candidate(word):
+            index = menu().index(word)
+            assert api("SelectCandidateOnCurrentPage", I, Z, Z)(session, index)
+            assert commit() == word
         for schema, full in ((b"double_pinyin_mspy", "nihk"), (b"rime_ice", "nihao")):
             assert api("SelectSchema", I, Z, S)(session, schema)
             reset()
@@ -105,6 +122,41 @@ def run_suite(user):
             # Left during an unfinished spelling must keep the pending composition.
             key(0xff51)
             assert menu() and not commit()
+            reset()
+            for code, modifiers in ((32,0), (0xff0d,0), (0xff09,0), (0xff1b,0), (49,0), (55,0), (48,0),
+                                    (0xff08,0), (0xffff,0), (0xff52,0), (0xff54,0), (0xff55,0),
+                                    (0xff50,0), (0xff57,0), (0xff53,1), (ord("c"),4),
+                                    (ord("q"),8), (0xffbe,0), (ord(","),0), (ord("@"),0),
+                                    (ord("n"),0)):
+                compare_with_idle(full, code, modifiers)
+            option("prediction", False)
+            reset()
+            option("prediction", True)
+            type_code(full)
+            choose("你好")
+            assert not key(32, 1 << 30) and menu()  # Releasing the commit key keeps the offered words tappable.
+            click_candidate(menu()[0])
+            type_code(full)
+            choose("你好")
+            assert not key(0xff1b) and not menu() and not commit()
+            type_code(full)
+            choose("你好")
+            for _ in range(2):  # Holding Space must deliver every repeat to the editor.
+                handled = key(32)
+                assert ((handled and commit() == " ") or (not handled and not commit())) and not menu()
+            assert type_code(full)[0] == "你好"
+            reset()
+            for edge in (True, False):
+                type_code(full)
+                choose("你好")
+                assert menu()
+                option("link_dismiss_prediction", edge)
+                assert not menu() and not commit()
+                reset()
+                assert not menu()
+            type_code(full)
+            option("link_dismiss_prediction", True)
+            assert menu()[0] == "你好" and not commit()
             reset()
             option("incognito_mode", False)
             print(schema, "initials", type_code("zg"))
@@ -137,7 +189,11 @@ def run_suite(user):
         dismiss_prediction(0xff53, 4)  # Ctrl+Right moves a word, even for personal-only suggestions.
         type_code("zzqb")
         choose("青柚")
-        assert key(32) and commit() == "竹筏"
+        click_candidate("竹筏")
+        type_code("zzqb")
+        choose("青柚")
+        assert "竹筏" in menu()
+        assert not key(0xff08) and not menu() and not commit()
         reset()
         type_code("zzqc")
         choose("纸鹤锚点")

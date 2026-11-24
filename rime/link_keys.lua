@@ -1,5 +1,6 @@
-local rejected, accepted, noop = 0, 1, 2
+local accepted, noop = 1, 2
 local domains = require("link_domains")
+local dismiss_prediction = require("link_prediction")
 
 local function domain_prefix(prefix)
     for _, domain in ipairs(domains) do
@@ -11,18 +12,10 @@ end
 return function(key, env)
     if key:release() then return noop end
     local ctx = env.engine.context
-    if ctx:get_option("link_private") then return noop end
     local code = key.keycode
+    dismiss_prediction(ctx, key)
+    if ctx:get_option("link_private") then return noop end
     local segment = ctx.composition:back()
-    if (code == 0xff51 or code == 0xff53) and ctx.input == "" and segment
-       and (segment:has_tag("prediction") or segment:has_tag("link_personal")) then
-        ctx:set_property("link_break", "1")
-        -- A pass-through boundary ends the predictor's previous-word context.
-        -- Without it, a later editor selection update can recreate the menu.
-        ctx.commit_history:push("thru", "")
-        ctx:clear()
-        return rejected -- Pass the original arrow and its modifiers to the editor.
-    end
     if segment and segment:has_tag("link_email") then
         if key:ctrl() or key:alt() or key:super() then
             env.engine:commit_text(ctx.input)
@@ -79,10 +72,6 @@ return function(key, env)
        code == 0xff0d or code == 0xff1b or code == 0xff09 or
        (ctx.input == "" and (code == 0xff08 or code == 0xffff or (code >= 0xff50 and code <= 0xff57))) then
         ctx:set_property("link_break", "1")
-        if segment and segment:has_tag("link_personal") and (code == 0xff08 or code == 0xff1b) then
-            ctx:clear()
-            return accepted
-        end
     end
     return noop
 end

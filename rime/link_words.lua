@@ -3,6 +3,7 @@
 local db, users = nil, 0
 local MAX_CHOICES, MAX_CHARS, TIMEOUT = 16, 16, 90
 local filter = {}
+local dismiss_prediction = require("link_prediction")
 
 local function is_han(code)
     return (code >= 0x3400 and code <= 0x9FFF) or (code >= 0xF900 and code <= 0xFAFF)
@@ -106,8 +107,10 @@ function filter.init(env)
     end
     local ctx = env.engine.context
     env.commit = ctx.commit_notifier:connect(function(context) remember(context, env) end)
-    env.option = ctx.option_update_notifier:connect(function(_, name)
-        if name == "link_new_editor" or name == "link_private" or name == "incognito_mode" or name == "ascii_mode" then
+    env.option = ctx.option_update_notifier:connect(function(context, name)
+        if name == "link_dismiss_prediction" then
+            dismiss_prediction(context)
+        elseif name == "link_new_editor" or name == "link_private" or name == "incognito_mode" or name == "ascii_mode" then
             reset(env)
         end
     end)

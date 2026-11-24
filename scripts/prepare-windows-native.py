@@ -29,6 +29,69 @@ def replace_pattern(path, pattern, after):
     path.write_text(source, encoding='utf-8')
 
 
+def add_passive_predictions(source, native):
+    tsf = source / 'WeaselTSF'
+    handler = source / 'RimeWithWeasel/RimeWithWeasel.cpp'
+    ipc = source / 'include/WeaselIPC.h'
+    client = source / 'WeaselIPC/WeaselClientImpl.cpp'
+    # Keep the existing IPC command and mark a passive-only dismissal in its unused wParam.
+    for path in (ipc, source / 'WeaselIPC/WeaselClientImpl.h'):
+        replace(path, 'bool ClearComposition();', 'bool ClearComposition(bool predictionOnly = false);')
+    replace(ipc, 'void ClearComposition(DWORD session_id)', 'void ClearComposition(DWORD session_id, bool predictionOnly)')
+    replace(source / 'include/RimeWithWeasel.h', 'void ClearComposition(WeaselSessionId ipc_id)',
+            'void ClearComposition(WeaselSessionId ipc_id, bool predictionOnly)')
+    replace(client, '::ClearComposition() {', '::ClearComposition(bool predictionOnly) {', expected=2)
+    replace(client, 'm_pImpl->ClearComposition()', 'm_pImpl->ClearComposition(predictionOnly)')
+    replace(client, 'WEASEL_IPC_CLEAR_COMPOSITION, 0,', 'WEASEL_IPC_CLEAR_COMPOSITION, predictionOnly,')
+    replace(source / 'WeaselIPCServer/WeaselServerImpl.cpp', 'm_pRequestHandler->ClearComposition(lParam)',
+            'm_pRequestHandler->ClearComposition(lParam, wParam != 0)')
+    replace(handler, '::ClearComposition(WeaselSessionId ipc_id)', '::ClearComposition(WeaselSessionId ipc_id, bool predictionOnly)')
+    replace(handler, '  rime_api->clear_composition(to_session_id(ipc_id));', '''  const auto session = to_session_id(ipc_id);
+  if (predictionOnly)
+    rime_api->set_option(session, "link_dismiss_prediction", !rime_api->get_option(session, "link_dismiss_prediction"));
+  else
+    rime_api->clear_composition(session);''')
+    replace(handler, '    if (ctx.menu.num_candidates) {\n      CandidateInfo cinfo;', '''    if (is_composing && ctx.menu.num_candidates && ctx.composition.length == 0)
+      messages.push_back("config.post_commit_prediction=1\\n");
+    if (ctx.menu.num_candidates) {
+      CandidateInfo cinfo;''')
+    replace(source / 'include/WeaselIPCData.h', 'Config() : inline_preedit(false) {}',
+            'bool post_commit_prediction = false;\n  Config() : inline_preedit(false) {}')
+    replace(source / 'include/WeaselIPCData.h', 'void reset() { inline_preedit = false; }',
+            'void reset() { inline_preedit = false; post_commit_prediction = false; }')
+    replace(source / 'WeaselIPC/Configurator.cpp', '  if (key[1] == L"inline_preedit") {',
+            '  if (!m_pTarget->p_config) return;\n  if (key[1] == L"post_commit_prediction")\n'
+            '    m_pTarget->p_config->post_commit_prediction = bool_value;\n  if (key[1] == L"inline_preedit") {')
+    shutil.copyfile(native / 'PredictionView.h', tsf / 'PredictionView.h')
+    replace(tsf / 'WeaselTSF.h', '  /* ui callback functions private */', '''  com_ptr<ITfContext> _linkPredictionContext;
+  com_ptr<ITfRange> _linkPredictionAnchor;
+  HWND _linkPredictionWindow = nullptr;
+  void _StartLinkPrediction(TfEditCookie ec);
+  void _EndLinkPrediction(bool notifyEngine);
+  void _CheckPredictionCaret(ITfContext* context, TfEditCookie ec);
+  static LRESULT CALLBACK _LinkEditorMessage(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+  /* ui callback functions private */''')
+    edit = tsf / 'EditSession.cpp'
+    replace(edit, '#include "EnglishCorrection.h"', '#include "EnglishCorrection.h"\n#include "PredictionView.h"')
+    replace(edit, '    if (!commit.empty()) {',
+            '    if (!config.post_commit_prediction || !commit.empty() || _linkPredictionContext.p != _pEditSessionContext.p)\n'
+            '      _EndLinkPrediction(false);\n    if (!commit.empty()) {')
+    replace(edit, '    if (_status.composing && !_IsComposing()) {',
+            '    if (config.post_commit_prediction) {\n      _StartLinkPrediction(ec);\n'
+            '    } else if (_status.composing && !_IsComposing()) {')
+    replace(edit, '    if (_IsComposing() && config.inline_preedit)', '    if (!config.post_commit_prediction && _IsComposing() && config.inline_preedit)')
+    replace(tsf / 'TextEditSink.cpp', '      fSelectionChanged) {',
+            '      fSelectionChanged) {\n    _CheckPredictionCaret(pContext, ecReadOnly);')
+    replace(tsf / 'ThreadMgrEventSink.cpp', 'if (pDocMgrFocus != pDocMgrPrevFocus) _linkFocusedContext.Release();',
+            'if (pDocMgrFocus != pDocMgrPrevFocus) {\n    _EndLinkPrediction(true);\n    _linkFocusedContext.Release();\n  }')
+    replace(tsf / 'Composition.cpp', 'void WeaselTSF::_AbortComposition(bool clear) {',
+            'void WeaselTSF::_AbortComposition(bool clear) {\n  _EndLinkPrediction(true);')
+    replace(tsf / 'WeaselTSF.cpp', 'STDAPI WeaselTSF::Deactivate() {',
+            'STDAPI WeaselTSF::Deactivate() {\n  _EndLinkPrediction(true);')
+    replace(tsf / 'WeaselTSF.cpp', '    _DeleteCandidateList();',
+            '    _EndLinkPrediction(true);\n    _DeleteCandidateList();')
+
+
 def write_overlay(source, version, boost):
     native = ROOT / 'windows/Native'
     for name, destination in (
@@ -210,6 +273,7 @@ fs::path WeaselUserDataPath() {
     _linkEnglishContext.Release();
   }''')
     globals_cpp = tsf / 'Globals.cpp'
+    add_passive_predictions(source, native)
     for old, new in (
         ('c_clsidTextService', '0xa6d4a312, 0x7df3, 0x4bd0, {0x9d, 0x84, 0xbb, 0xd2, 0x5b, 0xc6, 0x0a, 0xa1}'),
         ('c_guidProfile', '0x40cfbb46, 0x1eb1, 0x41f3, {0xa3, 0x36, 0x75, 0xcb, 0x9a, 0x13, 0x7b, 0xd2}'),

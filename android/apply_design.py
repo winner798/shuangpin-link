@@ -180,6 +180,72 @@ def apply_design(src, assets):
         clipboardLink.suspendClipboard()""")
     input_view = "    private var inputView: InputView? = null"
     apply_edit(ime, input_view, input_view + "\n    private var inputViewAwaitingTheme = false")
+    # Track the expected caret of our own edit. Selection notifications also arrive
+    # after an ordinary commit, before the user has done anything in the editor.
+    apply_edit(ime, "    private var cursorUpdateIndex = 0", """    private var cursorUpdateIndex = 0
+    private var linkCaret = -1
+    private var linkComposingStart = -1
+
+    internal fun dismissLinkPrediction() {
+        postRimeJob { dismissPrediction() }
+    }""")
+    apply_edit(ime, '        clipboardLink.editor(attribute)', '''        clipboardLink.editor(attribute)
+        linkCaret = minOf(attribute.initialSelStart, attribute.initialSelEnd)
+        linkComposingStart = -1
+        dismissLinkPrediction()''')
+    apply_edit(ime, "        cursorUpdateIndex += 1", """        if (candidatesStart >= 0 && candidatesEnd >= 0) {
+            if (composingText.isNotEmpty()) linkComposingStart = candidatesStart
+        } else {
+            val moved = oldSelStart != newSelStart || oldSelEnd != newSelEnd
+            if (moved && linkCaret >= 0 && (newSelStart != linkCaret || newSelEnd != linkCaret)) {
+                dismissLinkPrediction()
+            }
+            linkCaret = minOf(newSelStart, newSelEnd)
+        }
+        cursorUpdateIndex += 1""")
+    apply_edit(ime, "        // when composing text equals commit content", """        val start = if (linkComposingStart >= 0) linkComposingStart else linkCaret
+        linkCaret = if (start >= 0) start + text.length else -1
+        linkComposingStart = -1
+        // when composing text equals commit content""")
+    apply_edit(ime, "            ic.setComposingText(text, 1)", """            if (linkComposingStart < 0 && text.isNotEmpty()) linkComposingStart = linkCaret
+            if (linkComposingStart >= 0) linkCaret = linkComposingStart + text.length
+            if (text.isEmpty()) linkComposingStart = -1
+            ic.setComposingText(text, 1)""")
+    apply_edit(ime, "        super.onViewClicked(focusChanged)", """        super.onViewClicked(focusChanged)
+        dismissLinkPrediction()""")
+    apply_edit(ime, "        super.onUpdateEditorToolType(toolType)", """        super.onUpdateEditorToolType(toolType)
+        if (toolType == android.view.MotionEvent.TOOL_TYPE_FINGER || toolType == android.view.MotionEvent.TOOL_TYPE_STYLUS) {
+            dismissLinkPrediction()
+        }""")
+    apply_edit(ime, """            clearComposition()
+        }
+        InputFeedbackManager.finishInput()""", """            dismissPrediction()
+            clearComposition()
+        }
+        InputFeedbackManager.finishInput()""")
+    apply_edit(actions, "                        service.commitText(action.commit)", """                        service.dismissLinkPrediction()
+                        service.commitText(action.commit)""")
+    apply_edit(actions, "                if (shouldHandle) {", """                if (shouldHandle) {
+                    when (action.code) {
+                        KeyEvent.KEYCODE_FUNCTION -> if (action.command != "select_candidate") service.dismissLinkPrediction()
+                        KeyEvent.KEYCODE_SWITCH_CHARSET, KeyEvent.KEYCODE_EISU, KeyEvent.KEYCODE_LANGUAGE_SWITCH,
+                        KeyEvent.KEYCODE_SETTINGS, KeyEvent.KEYCODE_PROG_RED,
+                        KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_VOICE_ASSIST -> service.dismissLinkPrediction()
+                    }""")
+    apply_edit(actions, '                        Timber.d("handleKey: hook")',
+               '                        dismissPrediction()\n                        Timber.d("handleKey: hook")')
+    api = java / "core/RimeApi.kt"
+    apply_edit(api, "    suspend fun clearComposition()", "    suspend fun dismissPrediction()\n\n    suspend fun clearComposition()")
+    engine = java / "core/Rime.kt"
+    apply_edit(engine, "    override suspend fun clearComposition()", """    override suspend fun dismissPrediction(): Unit = withRimeContext {
+        if (hasMenu && getRimeRawInput().isEmpty()) {
+            val option = "link_dismiss_prediction"
+            setRimeOption(option, !getRimeOption(option))
+            emitResponse()
+        }
+    }
+
+    override suspend fun clearComposition()""")
     theme_ready = "                ColorManager.addOnChangedListener(onColorChangeListener)"
     apply_edit(ime, theme_ready, theme_ready + """
                 if (inputViewAwaitingTheme && ::contentView.isInitialized) {

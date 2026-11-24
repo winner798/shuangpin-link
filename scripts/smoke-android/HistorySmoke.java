@@ -50,9 +50,8 @@ public class HistorySmoke extends Instrumentation {
             editor = activity.findViewById(android.R.id.content).findViewWithTag("sampleEditor");
             keyboard(true);
             if (testArrows) {
-                verifyArrow(KeyEvent.KEYCODE_DPAD_LEFT, 3);
-                verifyArrow(KeyEvent.KEYCODE_DPAD_RIGHT, 5);
-                result.putString("status", "Left and Right dismissed predictions and moved the cursor once");
+                verifyPassiveSuggestions();
+                result.putString("status", "Passive predictions yielded to editor actions and explicit selection worked");
                 finish(Activity.RESULT_OK, result);
                 return;
             }
@@ -114,7 +113,7 @@ public class HistorySmoke extends Instrumentation {
         }
     }
 
-    private void verifyArrow(int key, int expectedCursor) {
+    private void openPrediction() {
         runOnMainSync(() -> {
             editor.setText("ABCD");
             editor.setSelection(2);
@@ -122,11 +121,15 @@ public class HistorySmoke extends Instrumentation {
         });
         keyboard(true);
         typeNihaoAndSpace();
-        String committed = "AB你好CD";
-        waitForEditor(committed);
+        waitForEditor("AB你好CD");
         // A fresh dictionary suggests 吗 after 你好. Check the candidate before sending
         // the key so an empty/disabled prediction menu cannot make the test pass.
         awaitText("吗");
+    }
+
+    private void verifyArrow(int key, int expectedCursor) {
+        openPrediction();
+        String committed = "AB你好CD";
         sendKeyDownUpSync(key);
         boolean[] moved = {false};
         for (int i = 0; i < 40; i++) {
@@ -140,6 +143,52 @@ public class HistorySmoke extends Instrumentation {
             SystemClock.sleep(100);
         }
         throw new AssertionError(KeyEvent.keyCodeToString(key) + " did not dismiss predictions and move exactly once");
+    }
+
+    private void waitForPredictionToClose() {
+        long end = SystemClock.uptimeMillis() + 5000;
+        while (find("吗") != null) {
+            if (SystemClock.uptimeMillis() >= end) throw new AssertionError("Prediction remained on screen");
+            SystemClock.sleep(100);
+        }
+    }
+
+    private void verifyPassiveSuggestions() {
+        verifyArrow(KeyEvent.KEYCODE_DPAD_LEFT, 3);
+        verifyArrow(KeyEvent.KEYCODE_DPAD_RIGHT, 5);
+        openPrediction();
+        touch(530, 2108, 40); // On-screen Space
+        waitForEditor("AB你好 CD");
+        waitForPredictionToClose();
+        openPrediction();
+        sendKeyDownUpSync(KeyEvent.KEYCODE_DEL);
+        waitForEditor("AB你CD");
+        waitForPredictionToClose();
+        openPrediction();
+        typeNihaoAndSpace();
+        waitForEditor("AB你好你好CD");
+        openPrediction();
+        tap(awaitText("吗"));
+        waitForEditor("AB你好吗CD");
+        openPrediction();
+        runOnMainSync(() -> editor.setSelection(0, 2));
+        waitForPredictionToClose();
+        waitForEditor("AB你好CD");
+        openPrediction();
+        int[] location = new int[2];
+        runOnMainSync(() -> {
+            editor.getLocationOnScreen(location);
+            location[0] += editor.getTotalPaddingLeft() + 1;
+            location[1] += editor.getHeight() / 2;
+        });
+        touch(location[0], location[1], 60);
+        waitForPredictionToClose();
+        waitForEditor("AB你好CD");
+        openPrediction();
+        keyboard(false);
+        keyboard(true);
+        waitForPredictionToClose();
+        waitForEditor("AB你好CD");
     }
 
     private boolean typeModeSample() {
