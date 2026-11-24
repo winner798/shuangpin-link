@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace ShuangpinLink;
@@ -23,6 +24,9 @@ internal sealed class Relay
         Timeout = TimeSpan.FromSeconds(27)
     };
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    // HTTP request bodies are standalone JSON. Escaping '+' in an encrypted Base64
+    // block adds about 8% to its wire size and exceeds the relay's bounded envelope.
+    static readonly JsonSerializerOptions RequestJson = new(Json) { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     readonly Uri server;
     readonly string token;
 
@@ -42,7 +46,7 @@ internal sealed class Relay
         using var request = CreateRequest(method, path, protocol);
         if (body is not null)
         {
-            request.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(body, Json));
+            request.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(body, RequestJson));
             request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         }
         using var deadline = protocol is "v2" or "v3" ? CancellationTokenSource.CreateLinkedTokenSource(cancel) : null;

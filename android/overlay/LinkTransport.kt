@@ -77,14 +77,28 @@ internal class LinkHttp(server: String, private val token: String) {
         body: JSONObject? = null,
         responseLimit: Int = (DICT_LIMIT + 128) * 4 / 3 + 256,
         apiVersion: Int = 1,
-    ): JSONObject? = withContext(Dispatchers.IO) {
+    ): JSONObject? = exchange(method, route, responseLimit, apiVersion, body?.let { { it.toString().toByteArray() } })
+
+    suspend fun putImageChunk(event: ImageEvent, index: Int, envelope: String) {
+        val length = event.length(index)
+        require(envelope.length == ((length + 28 + 2) / 3) * 4)
+        exchange("PUT", "image/${event.id}/$index", 256, 3) {
+            // Base64 produced by ImageWire uses only this alphabet. Android's JSONStringer
+            // can escape '/' and grow a full block beyond the protocol request limit.
+            require(envelope.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "+/=" })
+            "{\"envelope\":\"$envelope\"}".toByteArray(Charsets.US_ASCII)
+        }
+    }
+
+    private suspend fun exchange(method: String, route: String, responseLimit: Int, apiVersion: Int,
+                                 body: (() -> ByteArray)?): JSONObject? = withContext(Dispatchers.IO) {
         val conn = connection(method, route, apiVersion)
         val cancelConnection = if (apiVersion >= 3) launch(start = CoroutineStart.UNDISPATCHED) {
             try { awaitCancellation() } finally { conn.disconnect() }
         } else null
         try {
             if (body != null) {
-                val bytes = body.toString().toByteArray()
+                val bytes = body()
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.setFixedLengthStreamingMode(bytes.size)
                 conn.doOutput = true

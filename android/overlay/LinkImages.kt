@@ -144,13 +144,12 @@ internal class LinkImages(
                     if (!allowed(p) || generation != current || !ClipboardCodec.isFresh(stamp)) return@launch
                     val encrypted = withContext(Dispatchers.Default) { ImageWire.seal(key, event, i, data) }
                     state.value = ImageStatus("发送图片 ${i * 100 / event.count}% · 点此取消")
-                    val body = JSONObject().put("envelope", encrypted)
-                    try { client.call("PUT", "image/$id/$i", body, responseLimit = 256, apiVersion = 3) }
+                    try { client.putImageChunk(event, i, encrypted) }
                     catch (e: java.io.IOException) {
                         if (e is LinkHttpError && e.code < 500) throw e
                         delay(500)
                         if (!allowed(p) || generation != current || !ClipboardCodec.isFresh(stamp)) return@launch
-                        client.call("PUT", "image/$id/$i", body, responseLimit = 256, apiVersion = 3)
+                        client.putImageChunk(event, i, encrypted)
                     }
                 }
                 started = false
