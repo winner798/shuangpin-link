@@ -1,6 +1,7 @@
 package com.osfans.trime.link
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.AtomicFile
 import android.view.View
 import androidx.lifecycle.lifecycleScope
@@ -12,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -44,20 +46,24 @@ internal data class HistoryView(
     val error: Boolean = false,
 )
 
-internal fun bindHistoryPreview(view: View, service: TrimeInputMethodService, update: (String?) -> Unit) {
+internal fun bindHistoryPreview(view: View, service: TrimeInputMethodService, update: (String?, Bitmap?) -> Unit) {
     view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
         private var updates: Job? = null
         override fun onViewAttachedToWindow(v: View) {
             updates = service.lifecycleScope.launch {
-                service.linkHistory.view.map { it.preview }.distinctUntilChanged().collect { value ->
-                    val excerpt = value?.take(80)?.replace('\n', ' ')?.replace('\r', ' ')
-                    update(if (value != null && value.length > 80) "${excerpt}…" else excerpt)
+                combine(service.linkHistory.view.map { it.preview }.distinctUntilChanged(), service.linkImages.view) { text, image ->
+                    if (image.label.isNotEmpty()) image else {
+                        val excerpt = text?.take(80)?.replace('\n', ' ')?.replace('\r', ' ').orEmpty()
+                        ImageStatus(if (text != null && text.length > 80) "${excerpt}…" else excerpt)
+                    }
+                }.collect { value ->
+                    update(value.label, value.thumbnail)
                 }
             }
         }
         override fun onViewDetachedFromWindow(v: View) {
             updates?.cancel()
-            update(null)
+            update(null, null)
         }
     })
 }

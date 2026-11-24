@@ -25,6 +25,8 @@ internal static class Program
     private static int Main(string[] args)
     {
         Console.OutputEncoding = Encoding.UTF8;
+        if (args is ["--seed-image-pair", var pairing]) return ImageNetworkFixture.Seed(pairing);
+        if (args is ["--image-roundtrip", var pair]) return ImageNetworkFixture.Run(pair);
         if (args is ["--check-history", var folder])
         {
             HistoryFixture.Run(folder).GetAwaiter().GetResult();
@@ -111,6 +113,7 @@ internal static class Program
                     }
                     await HistoryFixture.Run(args[0]);
                     await AssertClipboardPrivacy(window.Handle);
+                    ImageFixture.VerifyClipboard(window.Handle, args[0]);
                     status = 0;
                 }
                 finally

@@ -29,6 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python -B -m unittest discover -s tests -v
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Transfer synthetic images between both client codecs through a test relay
+        run: |
+          python3 -m venv .build-image-test
+          .build-image-test/bin/pip install --only-binary=:all: Pillow==13.0.0
+          dotnet build tests/image/Fixture.csproj -c Release
+          kotlinc android/overlay/{ClipboardCodec,ImageWire,ImageFormats}.kt tests/image/ImageFixture.kt -include-runtime -d .build-image-test/image.jar
+          .build-image-test/bin/python -B tests/image/interop.py --dll tests/image/bin/Release/net8.0/Fixture.dll --jar .build-image-test/image.jar
 
   windows:
     if: ${{ !inputs.android_build_run }}

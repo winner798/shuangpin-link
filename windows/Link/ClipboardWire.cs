@@ -53,12 +53,12 @@ internal static class ClipboardWire
         }
     }
 
-    static bool ValidId(string id) => id.Length == 32 && id.All(character => character is >= 'a' and <= 'f' or >= '0' and <= '9');
+    internal static bool ValidId(string id) => id.Length == 32 && id.All(character => character is >= 'a' and <= 'f' or >= '0' and <= '9');
 
     static byte[] AssociatedData(string sender, string id, long sentAt) =>
         Encoding.UTF8.GetBytes($"{Domain}\n{sender}\n{id}\n{sentAt.ToString(CultureInfo.InvariantCulture)}");
 
-    static AesGcm DirectionalCipher(string key, string sender)
+    internal static AesGcm DirectionalCipher(string key, string sender, string domain = Domain)
     {
         string direction = sender switch
         {
@@ -71,7 +71,7 @@ internal static class ClipboardWire
         {
             if (shared.Length != 32) throw new CryptographicException("设备加密密钥无效。");
             byte[] derived = HKDF.DeriveKey(HashAlgorithmName.SHA256, shared, 32,
-                Encoding.UTF8.GetBytes(Domain), Encoding.UTF8.GetBytes(direction));
+                Encoding.UTF8.GetBytes(domain), Encoding.UTF8.GetBytes(direction));
             try { return new AesGcm(derived, TagSize); }
             finally { CryptographicOperations.ZeroMemory(derived); }
         }

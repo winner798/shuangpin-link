@@ -63,7 +63,8 @@ internal sealed partial class LinkWindow
         var relay = new Relay(device.Server, device.Device.Token);
         clipboardLink = new CancellationTokenSource();
         var token = clipboardLink.Token;
-        clipboardWorkers = Task.WhenAll(ReceiveClipboard(relay, device.Key, token), UploadClipboard(relay, token));
+        clipboardWorkers = Task.WhenAll(ReceiveClipboard(relay, device.Key, token), UploadClipboard(relay, token),
+            MonitorImages(relay, device, token));
     }
 
     void StopClipboard()
@@ -71,11 +72,15 @@ internal sealed partial class LinkWindow
         if (clipboardLink is { } source)
         {
             source.Cancel();
+            if (session is { ImagesEnabled: true } device && (device.Paused || changingClipboardPair || sessionLocked || exiting))
+                _ = UnregisterImages(device);
             _ = FinishClipboardWorkers(source, clipboardWorkers);
             clipboardLink = null;
         }
         clipboardPending = null;
         clipboardPeerReady = false;
+        StopImageOperations();
+        if (sessionLocked || changingClipboardPair || exiting || session is not { ImagesEnabled: true, Paused: false }) PruneImageCache(clear: true);
     }
 
     static async Task FinishClipboardWorkers(CancellationTokenSource source, Task workers)
@@ -92,13 +97,15 @@ internal sealed partial class LinkWindow
         if (sequence == lastClipboardSequence) return;
         lastClipboardSequence = sequence;
         clipboardPending = null;
+        NoteLocalClipboardChange();
         bool send = clipboardPeerReady && clipboardLink is { IsCancellationRequested: false } && sequence != syncBaseline;
         if ((!CanRecordHistory && !send) || !InteractiveDesktop()) return;
         try
         {
             var clipboard = Clipboard.GetDataObject();
-            if (clipboard is null || PrivateClipboard.IsProtected(clipboard)
-                || clipboard.GetData(DataFormats.UnicodeText, autoConvert: false) is not string { Length: > 0 } text
+            if (clipboard is null || PrivateClipboard.IsProtected(clipboard)) return;
+            if (send && session is { ImagesEnabled: true } && CaptureNewImage(sequence)) return;
+            if (clipboard.GetData(DataFormats.UnicodeText, autoConvert: false) is not string { Length: > 0 } text
                 || text.Contains('\0') || ClipEncoding.GetByteCount(text) > ClipboardWire.TextLimit
                 || sequence != PrivateClipboard.Sequence) return;
 
@@ -154,7 +161,7 @@ internal sealed partial class LinkWindow
         long after = 0;
         while (!token.IsCancellationRequested)
         {
-            uint sequence = PrivateClipboard.Sequence;
+            long localChange = localClipboardGeneration;
             try
             {
                 int wait = clipboardPeerReady ? 20 : 0;
@@ -170,8 +177,11 @@ internal sealed partial class LinkWindow
                 if (clip is null) continue;
                 if (clip.Revision <= after) throw new InvalidDataException("中继返回的剪贴板版本无效。");
                 after = clip.Revision;
-                if (clip.Envelope is null || clipboardPending is not null || sequence != PrivateClipboard.Sequence) continue;
-                ApplyAuthenticatedClipboard(key, clip, sequence, token);
+                CaptureClipboard();
+                if (clip.Envelope is null || session == null || clip.SentAt <= session.AcceptedClipboardTime) continue;
+                if (session.ImagesEnabled ? clip.SentAt <= lastLocalClipboardAt
+                    : clipboardPending != null || localChange != localClipboardGeneration) continue;
+                ApplyAuthenticatedClipboard(key, clip, PrivateClipboard.Sequence, token);
             }
             catch (Exception error) when (Retryable(error, token))
             {
@@ -206,6 +216,9 @@ internal sealed partial class LinkWindow
             if (PrivateClipboard.Write(Handle, sequence, text))
             {
                 lastClipboardSequence = PrivateClipboard.Sequence;
+                clipboardPending = null;
+                sendingImage?.Cancel();
+                receivingImage?.Cancel();
                 _ = AddHistory(text);
             }
         }

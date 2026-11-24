@@ -11,5 +11,9 @@
     <Compile Include="../../windows/Link/ClipboardHistory.cs" Link="ClipboardHistory.cs" />
     <Compile Include="../../windows/Link/ClipboardWire.cs" Link="ClipboardWire.cs" />
     <Compile Include="../../windows/Link/PrivateClipboard.cs" Link="PrivateClipboard.cs" />
+    <Compile Include="../../windows/Link/ClipboardImages.cs" Link="ClipboardImages.cs" />
+    <Compile Include="../../windows/Link/ImageFormats.cs" Link="ImageFormats.cs" />
+    <Compile Include="../../windows/Link/ImageWire.cs" Link="ImageWire.cs" />
+    <Compile Include="../../windows/Link/Relay.cs" Link="Relay.cs" />
   </ItemGroup>
 </Project>

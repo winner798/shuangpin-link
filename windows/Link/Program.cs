@@ -91,6 +91,7 @@ internal sealed partial class LinkWindow : Form
 
         BuildLayout();
         ConfigureHistory();
+        ConfigureImages();
         checkUpdate.Click += async (_, _) => await CheckForUpdates();
         cancelUpdate.Click += (_, _) => updateRequest?.Cancel();
 
@@ -235,7 +236,7 @@ internal sealed partial class LinkWindow : Form
     }
 
     static bool Retryable(Exception error, CancellationToken token) => !token.IsCancellationRequested &&
-        error is HttpRequestException or OperationCanceledException or ExternalException or IOException or CryptographicException or FormatException or ArgumentException or JsonException or InvalidOperationException or UnauthorizedAccessException or System.ComponentModel.Win32Exception;
+        error is HttpRequestException or OperationCanceledException or ExternalException or IOException or InvalidDataException or CryptographicException or FormatException or ArgumentException or JsonException or InvalidOperationException or UnauthorizedAccessException or System.ComponentModel.Win32Exception;
 
     async Task DictionaryLoop(CancellationToken token)
     {
@@ -451,7 +452,7 @@ internal sealed partial class LinkWindow : Form
             await StopBeforeAccountChange();
             await relay.Send<object>(HttpMethod.Post, "reset-peer", CancellationToken.None);
             session = session! with { Key = Relay.Encode(RandomNumberGenerator.GetBytes(32)), DownloadedDictionary = 0,
-                UploadedDictionary = null, AcceptedClipboardTime = 0 };
+                UploadedDictionary = null, AcceptedClipboardTime = 0, ImagesEnabled = false };
             SaveSession();
         }
         finally { changingClipboardPair = false; await Restart(); RestartClipboard(); }
@@ -465,6 +466,8 @@ internal sealed partial class LinkWindow : Form
         {
             pause.Checked = device.Paused;
             share.Checked = device.ShareDictionary;
+            syncImages.Checked = device.ImagesEnabled;
+            keepImageMetadata.Checked = device.PreserveImageMetadata;
         }
         if (session is null) connectionStatus.Text = "尚未绑定服务器";
         else if (session.Paused) connectionStatus.Text = "剪贴板互通已暂停";
@@ -473,6 +476,8 @@ internal sealed partial class LinkWindow : Form
         fuzzy.Checked = fuzzyEnabled;
         englishCorrection.Checked = correctionEnabled;
         pause.Enabled = share.Enabled = session is not null;
+        syncImages.Enabled = session is { Paused: false };
+        keepImageMetadata.Enabled = session is { Paused: false, ImagesEnabled: true };
         if (session is not null && server.Text.Length == 0) server.Text = session.Server;
         updating = false;
     }

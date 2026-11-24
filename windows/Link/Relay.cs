@@ -14,7 +14,7 @@ internal sealed record Snapshot(string Sender, long Version, string Envelope);
 internal sealed record Pairing(int V, string Server, string Invite, string Key);
 internal sealed record Session(string Server, Device Device, string Key,
     bool Paused = false, bool ShareDictionary = true, long DownloadedDictionary = 0,
-    string? UploadedDictionary = null, long AcceptedClipboardTime = 0);
+    string? UploadedDictionary = null, long AcceptedClipboardTime = 0, bool ImagesEnabled = false, bool PreserveImageMetadata = false);
 
 internal sealed class Relay
 {
@@ -45,7 +45,7 @@ internal sealed class Relay
             request.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(body, Json));
             request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         }
-        using var deadline = protocol == "v2" ? CancellationTokenSource.CreateLinkedTokenSource(cancel) : null;
+        using var deadline = protocol is "v2" or "v3" ? CancellationTokenSource.CreateLinkedTokenSource(cancel) : null;
         deadline?.CancelAfter(TimeSpan.FromSeconds(27));
         var token = deadline?.Token ?? cancel;
         using var response = await Http.SendAsync(request,
@@ -55,7 +55,12 @@ internal sealed class Relay
         if (deadline is not null)
         {
             await using var stream = await response.Content.ReadAsStreamAsync(token);
-            var bytes = new byte[88 * 1024 + 1];
+            int maxBytes = protocol == "v3" ? 350 * 1024 : 88 * 1024;
+            if (response.Content.Headers.ContentLength is long declared && declared > maxBytes)
+                throw new InvalidDataException("中继返回的剪贴板响应过大。");
+            var capacity = response.Content.Headers.ContentLength.HasValue
+                ? (int)response.Content.Headers.ContentLength.Value : maxBytes;
+            var bytes = new byte[capacity + 1];
             int length = await stream.ReadAtLeastAsync(bytes.AsMemory(), bytes.Length, false, token);
             if (length == bytes.Length) throw new InvalidDataException("中继返回的剪贴板响应过大。");
             return JsonSerializer.Deserialize<T>(bytes.AsSpan(0, length), Json);

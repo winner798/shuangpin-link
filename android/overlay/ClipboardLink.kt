@@ -55,7 +55,8 @@ internal class ClipboardLink(private val ime: InputMethodService, private val sc
             power?.isInteractive == true && keyguard?.isDeviceLocked == false
     }
     val history = LinkHistory(ime, settings, scope, safeFocus)
-    private val clipboard = LinkClipboard(ime, settings, scope, history, safeFocus)
+    val images = LinkImages(ime, settings, scope, safeFocus)
+    private val clipboard = LinkClipboard(ime, settings, scope, history, images, safeFocus)
     private val screenLock = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
@@ -68,9 +69,12 @@ internal class ClipboardLink(private val ime: InputMethodService, private val sc
         }
     }
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "device" || key == "paused" || key == "history") {
+        if (key == "device" || key == "paused" || key == "history" || key == "images" || key == "imageMetadata") {
             clipboard.stop()
             clipboard.start()
+        }
+        if (key == "device" || key == "images" && !settings.prefs.getBoolean("images", false)) {
+            scope.launch(Dispatchers.IO) { LinkImageProvider.prune(ime, all = true) }
         }
         if (key == "device" || key == "share") refreshDictionarySync()
         if (key == "syncNow") scope.launch { syncDictionarySafely() }

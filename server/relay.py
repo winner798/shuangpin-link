@@ -31,6 +31,11 @@ ID_PATTERN = re.compile(r"[a-f0-9]{32}\Z")
 UPDATE_DIRECTORY = Path("/opt/shuangpin-link/updates")
 UPDATE_MANIFEST_LIMIT = 32 * 1024
 UPDATE_CHUNK_SIZE = 128 * 1024
+IMAGE_LIMIT = 8 * 1024 * 1024
+IMAGE_CHUNK = 256 * 1024
+DAILY_IMAGE_COUNT = 512
+DAILY_IMAGE_BYTES = 512 * 1024 * 1024
+IMAGE_PATH = re.compile(r"/v3/image/([a-f0-9]{32})(?:/(0|[1-9][0-9]?))?\Z")
 UPDATE_FILES = {
     "windows-x64": "windows-x64.exe",
     "android-arm64-v8a": "android-arm64-v8a.apk",
@@ -81,6 +86,24 @@ class Store:
                     sent_at INTEGER NOT NULL, expiry INTEGER NOT NULL, envelope TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS received_v2 (event_id TEXT PRIMARY KEY, expiry INTEGER);
+                CREATE TABLE IF NOT EXISTS image_capability (
+                    sender TEXT PRIMARY KEY, enabled INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS image_clock (
+                    sender TEXT PRIMARY KEY, sent_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS image_receipt (
+                    id TEXT PRIMARY KEY, size INTEGER NOT NULL, expiry INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS image_event (
+                    revision INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
+                    sender TEXT UNIQUE NOT NULL, sent_at INTEGER NOT NULL, size INTEGER NOT NULL,
+                    expiry INTEGER NOT NULL, ready INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS image_chunk (
+                    id TEXT NOT NULL REFERENCES image_event(id) ON DELETE CASCADE,
+                    idx INTEGER NOT NULL, frame BLOB NOT NULL, PRIMARY KEY (id, idx)
+                );
                 CREATE TABLE IF NOT EXISTS dictionary (
                     sender TEXT PRIMARY KEY REFERENCES device(id) ON DELETE CASCADE,
                     version INTEGER NOT NULL, envelope TEXT NOT NULL
@@ -176,7 +199,8 @@ class Store:
     @staticmethod
     def clear_pair(db):
         db.execute("DELETE FROM device WHERE role = 'peer'")
-        for table in ("invite", "clipboard", "received", "clipboard_v2", "received_v2", "dictionary"):
+        for table in ("invite", "clipboard", "received", "clipboard_v2", "received_v2", "dictionary",
+                      "image_event", "image_capability", "image_clock", "image_receipt"):
             db.execute(f"DELETE FROM {table}")
 
     @staticmethod
@@ -186,6 +210,8 @@ class Store:
         db.execute("DELETE FROM received WHERE expiry <= ?", (now,))
         db.execute("DELETE FROM clipboard_v2 WHERE expiry <= ?", (now_ms,))
         db.execute("DELETE FROM received_v2 WHERE expiry <= ?", (now_ms,))
+        db.execute("DELETE FROM image_event WHERE expiry <= ?", (now_ms,))
+        db.execute("DELETE FROM image_receipt WHERE expiry <= ?", (now_ms,))
         db.execute("DELETE FROM invite WHERE expiry <= ?", (now,))
 
     def put_clip(self, token, event_id, envelope):
@@ -218,6 +244,12 @@ class Store:
                 raise RequestError(429, "daily_clip_limit")
             expiry = min(now, sent_at) + CLIP_TTL_MS
             db.execute("INSERT INTO received_v2 VALUES (?, ?)", (event_id, now + RECEIPT_TTL * 1000))
+            # A slow image must not replace newer text from the same clipboard.
+            if db.execute("SELECT 1 FROM image_event WHERE sender = ? AND ready = 1 AND sent_at > ?",
+                          (sender, sent_at)).fetchone():
+                return
+            db.execute("DELETE FROM image_event WHERE sender = ? AND sent_at <= ?", (sender, sent_at))
+            self.record_clip_time(db, sender, sent_at)
             db.execute("DELETE FROM clipboard_v2")
             db.execute("""INSERT INTO clipboard_v2 (event_id, sender, sent_at, expiry, envelope)
                           VALUES (?, ?, ?, ?, ?)""", (event_id, sender, sent_at, expiry, envelope))
@@ -242,8 +274,8 @@ class Store:
             return {"revision": row["revision"], "envelope": None}
         return dict(row)
 
-    def get_clip(self, token, after, wait, *, v2=False):
-        read = self.read_clip_v2 if v2 else self.read_clip
+    def get_clip(self, token, after, wait, *, v2=False, image=False):
+        read = self.read_image if image else (self.read_clip_v2 if v2 else self.read_clip)
         deadline = time.monotonic() + wait
         with self.changed:
             while True:
@@ -257,6 +289,108 @@ class Store:
                 if remaining <= 0:
                     return None
                 self.changed.wait(timeout=remaining)
+
+    @staticmethod
+    def record_clip_time(db, sender, sent_at):
+        db.execute("""INSERT INTO image_clock VALUES (?, ?) ON CONFLICT(sender)
+                      DO UPDATE SET sent_at = MAX(sent_at, excluded.sent_at)""", (sender, sent_at))
+
+    def image_role(self, db, token):
+        role = self.paired_role(db, token)
+        if db.execute("SELECT COUNT(*) FROM image_capability WHERE enabled = 1").fetchone()[0] != 2:
+            raise RequestError(409, "image_peer_disabled")
+        return role
+
+    def set_image_capability(self, token, enabled):
+        with self.database(write=True) as db:
+            role = self.paired_role(db, token)
+            db.execute("""INSERT INTO image_capability VALUES (?, ?) ON CONFLICT(sender)
+                          DO UPDATE SET enabled = excluded.enabled WHERE enabled != excluded.enabled""",
+                       (role, int(enabled)))
+            if not enabled:
+                db.execute("DELETE FROM image_event")
+            peer_enabled = db.execute("SELECT 1 FROM image_capability WHERE sender != ? AND enabled = 1",
+                                      (role,)).fetchone() is not None
+        if not enabled:
+            with self.changed:
+                self.changed.notify_all()
+        return {"peerEnabled": peer_enabled}
+
+    def begin_image(self, token, image_id, sent_at, size):
+        with self.database(write=True) as db:
+            role = self.image_role(db, token)
+            now = epoch_ms()
+            if size < 1 or size > IMAGE_LIMIT:
+                raise RequestError(413, "image_size")
+            if not now - CLIP_TTL_MS < sent_at <= now + CLIP_CLOCK_AHEAD_MS:
+                raise RequestError(400, "invalid_timestamp")
+            self.purge(db, now)
+            existing = db.execute("SELECT sender, sent_at, size FROM image_event WHERE id = ?", (image_id,)).fetchone()
+            if existing and tuple(existing) == (role, sent_at, size):
+                return
+            if db.execute("SELECT 1 FROM image_receipt WHERE id = ?", (image_id,)).fetchone():
+                raise RequestError(409, "image_superseded")
+            clock = db.execute("SELECT sent_at FROM image_clock WHERE sender = ?", (role,)).fetchone()
+            if clock and sent_at <= clock[0]:
+                raise RequestError(409, "image_superseded")
+            count, reserved = db.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM image_receipt").fetchone()
+            if count >= DAILY_IMAGE_COUNT or reserved + size > DAILY_IMAGE_BYTES:
+                raise RequestError(429, "daily_image_limit")
+            self.record_clip_time(db, role, sent_at)
+            db.execute("INSERT INTO image_receipt VALUES (?, ?, ?)", (image_id, size, now + RECEIPT_TTL * 1000))
+            db.execute("DELETE FROM image_event WHERE sender = ?", (role,))
+            db.execute("INSERT INTO image_event(id, sender, sent_at, size, expiry) VALUES (?, ?, ?, ?, ?)",
+                       (image_id, role, sent_at, size, min(now, sent_at) + CLIP_TTL_MS))
+
+    def put_image_chunk(self, token, image_id, index, frame):
+        with self.database(write=True) as db:
+            role = self.image_role(db, token)
+            row = db.execute("SELECT size, sent_at FROM image_event WHERE id = ? AND sender = ? AND expiry > ?",
+                             (image_id, role, epoch_ms())).fetchone()
+            if not row:
+                raise RequestError(404, "image_unavailable")
+            size = row["size"]
+            chunk_size = min(IMAGE_CHUNK, size - index * IMAGE_CHUNK)
+            if chunk_size <= 0 or len(frame) != chunk_size + 28:
+                raise RequestError(400, "invalid_chunk")
+            previous = db.execute("SELECT frame FROM image_chunk WHERE id = ? AND idx = ?",
+                                  (image_id, index)).fetchone()
+            if previous:
+                if frame != previous[0]:
+                    raise RequestError(409, "image_chunk_conflict")
+                return
+            db.execute("INSERT INTO image_chunk VALUES (?, ?, ?)", (image_id, index, frame))
+            total = (size + IMAGE_CHUNK - 1) // IMAGE_CHUNK
+            complete = db.execute("SELECT COUNT(*) FROM image_chunk WHERE id = ?", (image_id,)).fetchone()[0] == total
+            if complete:
+                db.execute("UPDATE image_event SET ready = 1 WHERE id = ?", (image_id,))
+                db.execute("DELETE FROM clipboard_v2 WHERE sender = ? AND sent_at <= ?", (role, row["sent_at"]))
+        if complete:
+            with self.changed:
+                self.changed.notify_all()
+
+    def read_image(self, db, token, after):
+        role = self.image_role(db, token)
+        row = db.execute("""SELECT revision, id, sender, sent_at AS sentAt, size FROM image_event
+                            WHERE sender != ? AND ready = 1 AND revision > ? AND expiry > ?""",
+                         (role, after, epoch_ms())).fetchone()
+        return dict(row) if row else None
+
+    def get_image_chunk(self, token, image_id, index):
+        with self.database() as db:
+            db.execute("BEGIN")
+            role = self.image_role(db, token)
+            row = db.execute("""SELECT frame FROM image_chunk JOIN image_event USING(id)
+                                WHERE id = ? AND idx = ? AND sender != ? AND ready = 1 AND expiry > ?""",
+                             (image_id, index, role, epoch_ms())).fetchone()
+            if row is None:
+                raise RequestError(404, "image_unavailable")
+            return {"envelope": base64.b64encode(row[0]).decode("ascii")}
+
+    def cancel_image(self, token, image_id):
+        with self.database(write=True) as db:
+            role = self.paired_role(db, token)
+            db.execute("DELETE FROM image_event WHERE id = ? AND sender = ?", (image_id, role))
 
     def put_dictionary(self, token, version, envelope):
         with self.database(write=True) as db:
@@ -306,7 +440,7 @@ class Handler(BaseHTTPRequestHandler):
             raise RequestError(401, "credential_required")
         return authorization[7:]
 
-    def payload(self, limit):
+    def payload(self, limit, *, binary=False):
         size = self.headers.get("Content-Length", "")
         if not size.isascii() or not size.isdecimal() or len(size) > 10:
             raise RequestError(411, "length_required")
@@ -318,7 +452,7 @@ class Handler(BaseHTTPRequestHandler):
             decoded = base64.b64decode(envelope, validate=True)
             if not isinstance(envelope, str) or not 28 <= len(decoded) <= limit + 28:
                 raise ValueError
-            return value
+            return decoded if binary else value
         except (ValueError, TypeError, KeyError, UnicodeError) as exc:
             raise RequestError(400, "invalid_payload") from exc
 
@@ -399,6 +533,37 @@ class Handler(BaseHTTPRequestHandler):
             return 204, None
         if route == ("POST", "/v1/recover"):
             return 201, store.recover(self.token())
+        if route == ("PUT", "/v3/image/capability"):
+            enabled = query.get("enabled")
+            if enabled not in (["0"], ["1"]):
+                raise RequestError(400, "invalid_image_capability")
+            return 200, store.set_image_capability(self.token(), enabled == ["1"])
+        if route == ("GET", "/v3/image"):
+            after = self.integer(query.get("after", ["0"])[0], 10**18 - 1)
+            wait = self.integer(query.get("wait", ["0"])[0], 20)
+            result = store.get_clip(self.token(), after, wait, image=True)
+            return (200, result) if result else (204, None)
+        image = IMAGE_PATH.fullmatch(url.path)
+        if image:
+            token = self.token()
+            image_id, index = image.groups()
+            if index is None and self.command == "PUT":
+                sent_at = self.integer(query.get("sentAt", [""])[0], 10**18 - 1)
+                size = self.integer(query.get("size", [""])[0], 10**18 - 1)
+                store.begin_image(token, image_id, sent_at, size)
+                return 204, None
+            if index is None and self.command == "DELETE":
+                store.cancel_image(token, image_id)
+                return 204, None
+            if index is not None and self.command == "PUT":
+                # Authenticate before reading the request body, then check again under the write lock.
+                with store.database() as db:
+                    store.image_role(db, token)
+                frame = self.payload(IMAGE_CHUNK, binary=True)
+                store.put_image_chunk(token, image_id, int(index), frame)
+                return 204, None
+            if index is not None and self.command == "GET":
+                return 200, store.get_image_chunk(token, image_id, int(index))
         if self.command == "GET" and url.path in ("/v1/clip", "/v2/clip"):
             after = self.integer(query.get("after", ["0"])[0], 10**18 - 1)
             wait = self.integer(query.get("wait", ["0"])[0], 20)
@@ -448,6 +613,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
     do_GET = do_POST = do_PUT = handle_request
+
+    def do_DELETE(self):
+        if IMAGE_PATH.fullmatch(urlsplit(self.path).path):
+            self.handle_request()
+        else:
+            self.send_error(501, "Unsupported method ('DELETE')")
 
 
 class Relay(ThreadingHTTPServer):

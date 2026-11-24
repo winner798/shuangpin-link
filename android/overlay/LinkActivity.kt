@@ -166,6 +166,9 @@ class LinkActivity : ComponentActivity() {
             }
             pause = addSwitch(this, "暂停剪贴板收发与记录", "paused", false)
             clipboardStatus = addStatus(this, "", top = 8)
+            addSwitch(this, "图片互传", "images", false)
+            addSwitch(this, "发送时保留原图元数据（可能包含位置）", "imageMetadata", false)
+            addStatus(this, "与已配对电脑自动收发 PNG、JPEG、WebP 和 GIF，每张最多 8 MiB。键盘顶栏可查看进度、取消或点选图片粘贴。")
             addSwitch(this, "保存本机剪贴板历史", "history", true)
             addStatus(this, "点键盘顶栏的「剪贴板」或复制预览即可查看、粘贴和删除。历史在本机加密保存，最多 50 条，保留 7 天。")
             addAction(this, "清空本机剪贴板历史") {
@@ -475,10 +478,28 @@ class LinkActivity : ComponentActivity() {
                 } else {
                     settings.prefs.edit().apply {
                         putBoolean(key, checked)
+                        if (key == "images") {
+                            putLong("imagesSince", System.currentTimeMillis())
+                            putBoolean("imageDisablePending", !checked)
+                        }
                         if (key == "paused" || key == "history") putLong("historyAfter", System.currentTimeMillis())
                     }.apply()
                     if (key == "share") syncAction.isEnabled = checked && settings.device() != null
                     if (key == "paused") showClipboardStatus(checked)
+                    if (key == "images") {
+                        val paired = settings.clipboardPairing()
+                        lifecycleScope.launch {
+                            if (!checked) withContext(Dispatchers.IO) { LinkImageProvider.prune(this@LinkActivity, all = true) }
+                            if (paired != null) {
+                                try {
+                                    val peerEnabled = settings.announceImages(paired)
+                                    if (checked && settings.prefs.getBoolean("images", false))
+                                        clipboardStatus.text = if (peerEnabled) "两端已开启图片互传。" else "请在电脑端也开启图片互传。"
+                                } catch (c: CancellationException) { throw c }
+                                catch (_: Exception) { if (checked) clipboardStatus.text = "图片互传将在键盘打开时重试，请确认中继已更新。" }
+                            }
+                        }
+                    }
                 }
             }
             pane.addView(this, row(2))

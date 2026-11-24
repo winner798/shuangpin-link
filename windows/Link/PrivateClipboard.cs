@@ -18,34 +18,44 @@ internal static class PrivateClipboard
 
     internal static bool Write(nint window, uint sequence, string text)
     {
-        uint protectedFormat = RegisterClipboardFormatW(ExclusionFormat);
-        if (protectedFormat == 0) throw new ExternalException();
-        nint marker = 0;
-        nint content = 0;
         byte[] encoded = new byte[(text.Length + 1) * sizeof(char)];
         try
         {
             Encoding.Unicode.GetBytes(text.AsSpan(), encoded);
-            marker = Allocate([1, 0, 0, 0]);
-            content = Allocate(encoded);
+            return WriteFormats(window, sequence, [(UnicodeText, encoded)]);
+        }
+        finally { CryptographicOperations.ZeroMemory(encoded); }
+    }
+
+    internal static bool WriteFormats(nint window, uint sequence, List<(uint Format, byte[] Value)> formats)
+    {
+        formats.Insert(0, (RegisterClipboardFormatW(ExclusionFormat), [1, 0, 0, 0]));
+        var handles = new nint[formats.Count];
+        try
+        {
+            for (int i = 0; i < handles.Length; i++)
+            {
+                if (formats[i].Format == 0) throw new ExternalException();
+                handles[i] = Allocate(formats[i].Value);
+            }
             if (!OpenClipboard(window)) throw new ExternalException();
             try
             {
                 // Check for a local copy under the same clipboard lock used to replace it.
                 if (sequence != Sequence) return false;
-                if (!EmptyClipboard() || SetClipboardData(protectedFormat, marker) == 0) throw new ExternalException();
-                marker = 0;
-                if (SetClipboardData(UnicodeText, content) == 0) throw new ExternalException();
-                content = 0;
+                if (!EmptyClipboard()) throw new ExternalException();
+                for (int i = 0; i < handles.Length; i++)
+                {
+                    if (SetClipboardData(formats[i].Format, handles[i]) == 0) throw new ExternalException();
+                    handles[i] = 0;
+                }
                 return true;
             }
             finally { CloseClipboard(); }
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(encoded);
-            if (marker != 0) GlobalFree(marker);
-            if (content != 0) GlobalFree(content);
+            foreach (nint memory in handles) if (memory != 0) GlobalFree(memory);
         }
     }
 

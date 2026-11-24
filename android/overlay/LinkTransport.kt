@@ -7,6 +7,8 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.io.IOException
 import java.net.URI
@@ -59,7 +61,7 @@ internal class LinkHttp(server: String, private val token: String) {
         conn.readTimeout = 26000
         conn.instanceFollowRedirects = false
         conn.setRequestProperty("Authorization", "Bearer $token")
-        if (apiVersion == 2) {
+        if (apiVersion >= 2) {
             conn.useCaches = false
             conn.setRequestProperty("Cache-Control", "no-store")
         }
@@ -134,6 +136,20 @@ internal class LinkSettings(context: Context) {
 
     fun allowsClipboard(record: String) = storedDevice() == record && !prefs.getBoolean("paused", false)
 
+    // The settings screen and the keyboard share a process. Serialize announcements
+    // and read the preference inside the lock so a late request cannot undo a toggle.
+    suspend fun announceImages(pairing: ClipboardPairing): Boolean = imageAnnouncements.withLock {
+        if (storedDevice() != pairing.record) return@withLock false
+        val enabled = allowsClipboard(pairing.record) && prefs.getBoolean("images", false)
+        val result = LinkHttp(pairing.device.server, pairing.device.token).call("PUT",
+            "image/capability?enabled=${if (enabled) 1 else 0}", responseLimit = 256, apiVersion = 3)
+        if (storedDevice() == pairing.record && !enabled && !prefs.getBoolean("images", false))
+            prefs.edit().remove("imageDisablePending").apply()
+        enabled && result?.optBoolean("peerEnabled") == true
+    }
+
+    private companion object { val imageAnnouncements = Mutex() }
+
     fun recordClipboardReceipt(record: String, sentAt: Long): Boolean =
         allowsClipboard(record) && sentAt > prefs.getLong("clipboardReceivedAtV2", 0) &&
             prefs.edit().putLong("clipboardReceivedAtV2", sentAt).commit()
@@ -151,10 +167,12 @@ internal class LinkSettings(context: Context) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, localAesKey(KEY_ALIAS)) }
         val record = encode(cipher.iv + cipher.doFinal(json.toString().toByteArray()))
         check(prefs.edit().remove("dictionaryReceived").remove("dictionarySent").remove("clipboardReceivedAtV2")
+            .remove("images").remove("imageSent").remove("imagesSince")
             .putBoolean("share", true).putString("device", record).commit())
     }
 
     fun forget() {
-        prefs.edit().remove("dictionaryReceived").remove("dictionarySent").remove("clipboardReceivedAtV2").remove("device").apply()
+        prefs.edit().remove("dictionaryReceived").remove("dictionarySent").remove("clipboardReceivedAtV2")
+            .remove("images").remove("imageSent").remove("imagesSince").remove("device").apply()
     }
 }

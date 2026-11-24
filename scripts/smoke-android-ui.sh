@@ -30,8 +30,12 @@ cat > "$work/AndroidManifest.xml" <<'XML'
     package="io.github.winner798.keyboardpreview">
     <application android:label="输入预览" android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".PreviewActivity" android:exported="true" />
+        <activity android:name=".ImageEditor" android:exported="true" />
+        <provider android:name=".ImageSource" android:authorities="io.github.winner798.keyboardpreview.images"
+            android:exported="false" android:grantUriPermissions="true" />
     </application>
     <instrumentation android:name=".HistorySmoke" android:targetPackage="io.github.winner798.keyboardpreview" />
+    <instrumentation android:name=".PairedImageSmoke" android:targetPackage="io.github.winner798.shuangpinlink" />
 </manifest>
 XML
 cat > "$work/PreviewActivity.java" <<'JAVA'
@@ -67,7 +71,7 @@ JAVA
 
 "$tools/aapt2" link -I "$platform" --manifest "$work/AndroidManifest.xml" \
     --min-sdk-version 29 --target-sdk-version 34 -o "$work/editor-unsigned.apk"
-javac --release 8 -cp "$platform" -d "$work/classes" "$work/PreviewActivity.java" "$(dirname "$0")/smoke-android/HistorySmoke.java"
+javac --release 8 -cp "$platform" -d "$work/classes" "$work/PreviewActivity.java" "$(dirname "$0")"/smoke-android/*.java
 "$tools/d8" --min-api 29 --lib "$platform" --output "$work/dex" \
     "$work/classes/io/github/winner798/keyboardpreview/"*.class
 zip -jq "$work/editor-unsigned.apk" "$work/dex/classes.dex"
@@ -215,3 +219,8 @@ grep -F 'text="the "' "$output/android-editor-english.xml" >/dev/null
 
 adb shell am instrument -w "$preview/.HistorySmoke" | tee "$output/android-clipboard-history.txt"
 grep -F 'Clipboard preview, paste, deletion and sensitive exclusion verified' "$output/android-clipboard-history.txt" >/dev/null
+
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' \
+    -keyout "$work/key.pem" -out "$work/cert.pem" >/dev/null 2>&1
+adb reverse tcp:18766 tcp:18766
+/usr/bin/python3 "$(dirname "$0")/smoke-android/image_relay.py" "$work" | tee "$output/android-paired-image.txt"

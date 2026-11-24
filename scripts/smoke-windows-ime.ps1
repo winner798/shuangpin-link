@@ -135,6 +135,8 @@ try {
     dotnet $editorAssembly $output $dll 2>&1 |
         Tee-Object -FilePath (Join-Path $output 'editor.txt')
 
+    & (Join-Path $PSScriptRoot 'smoke-windows-ime/image-network.ps1') -Editor $editorAssembly -AppPath $appPath -Isolated
+
     $selected = Get-Content -Raw -LiteralPath (Join-Path $rime 'user.yaml')
     if ($selected -notmatch '(?m)^ +previously_selected_schema: rime_ice *\r?$') {
         throw 'The keyboard scheme picker did not save the selection of 普通拼音.'

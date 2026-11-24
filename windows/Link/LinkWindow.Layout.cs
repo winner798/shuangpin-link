@@ -68,6 +68,10 @@ internal sealed partial class LinkWindow
         StyleCheck(share);
         StyleCheck(pause);
         StyleCheck(recordHistory);
+        StyleCheck(syncImages);
+        StyleCheck(keepImageMetadata);
+        StyleButton(cancelImage, primary: false);
+        StyleButton(retryImage, primary: false);
 
         var trial = new TextBox { ImeMode = ImeMode.NoControl };
         var modes = new TableLayoutPanel { ColumnCount = 2, RowCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill };
@@ -95,7 +99,10 @@ internal sealed partial class LinkWindow
             Card("手机配对", Actions(ActionButton("显示配对码", Invite, primary: true), ActionButton("解除手机配对", ResetPeer)), qrBox),
             Card("剪贴板", Copy("配对后自动加密收发纯文字。带系统隐私标记的内容会被跳过。"), pause, recordHistory,
                 Copy("本机加密保存最近 7 天、最多 50 条。暂停同步时也会暂停收录。"),
-                Actions(ActionButton("查看剪贴板历史", ShowHistory))));
+                Actions(ActionButton("查看剪贴板历史", ShowHistory))),
+            Card("图片互传", syncImages, Copy("两端开启后，复制 PNG、JPEG、GIF、WebP 或截图即可传送。每张最多 8 MiB。"),
+                keepImageMetadata, Copy("原图可能带有拍摄位置。默认移除附加元数据。"),
+                imageStatus, Actions(cancelImage, retryImage)));
 
         updateStatus.ForeColor = Glass.Muted;
         StyleButton(checkUpdate, primary: true);

@@ -28,6 +28,9 @@ def apply_design(src, assets):
         shutil.copyfile(HERE / "res" / resource, destination)
 
     manifest = app / "AndroidManifest.xml"
+    apply_edit(manifest, '        <!-- Settings activity -->',
+               '        <provider android:name=".link.LinkImageProvider" android:authorities="${applicationId}.link-images"\n'
+               '            android:exported="false" android:grantUriPermissions="true" />\n\n        <!-- Settings activity -->')
     apply_edit(manifest, 'android:targetActivity=".ui.main.MainActivity"', 'android:targetActivity=".link.LinkActivity"')
     apply_edit(manifest, 'android:name=".ui.main.MainActivity"\n            android:exported="true"',
                'android:name=".ui.main.MainActivity"\n            android:exported="false"')
@@ -79,15 +82,37 @@ def apply_design(src, assets):
     old_preview = "            ClipboardHelper.addOnUpdateListener(onClipboardUpdateListener)"
     if "// Copied content never appears" in input_bar.read_text(encoding="utf-8"):
         old_preview = "            // Copied content never appears as an automatic keyboard suggestion."
-    apply_edit(input_bar, old_preview,
-               """            com.osfans.trime.link.bindHistoryPreview(this, service) { preview ->
+    old_binding = """            com.osfans.trime.link.bindHistoryPreview(this, service) { preview ->
                 alwaysUi.clipboardUi.text.text = preview.orEmpty()
                 isClipboardFresh = !preview.isNullOrEmpty()
                 evalAlwaysUiState()
+            }"""
+    if old_binding in input_bar.read_text(encoding="utf-8"):
+        old_preview = old_binding
+    apply_edit(input_bar, old_preview,
+               """            com.osfans.trime.link.bindHistoryPreview(this, service) { preview, thumbnail ->
+                alwaysUi.clipboardUi.text.text = preview.orEmpty()
+                alwaysUi.clipboardUi.setPreview(thumbnail)
+                isClipboardFresh = !preview.isNullOrEmpty()
+                evalAlwaysUiState()
             }""")
-    apply_edit(input_bar, """                    val content = ClipboardHelper.lastBean?.text
+    old_click = """                    val content = ClipboardHelper.lastBean?.text
                     content?.let { service.commitText(it) }
-                    dismissClipboardSuggestion()""", """                    if (service.linkHistory.enabled) windowManager.attachWindow(com.osfans.trime.link.HistoryWindow(di))""")
+                    dismissClipboardSuggestion()"""
+    history_click = "                    if (service.linkHistory.enabled) windowManager.attachWindow(com.osfans.trime.link.HistoryWindow(di))"
+    if history_click in input_bar.read_text(encoding="utf-8"):
+        old_click = history_click
+    apply_edit(input_bar, old_click, history_click.replace("if (service.", "if (!service.linkImages.tap() && service."))
+    apply_edit(input_bar, """            clipboardUi.dismiss.setOnClickListener {
+                dismissClipboardSuggestion()""", """            clipboardUi.dismiss.setOnClickListener {
+                if (!service.linkImages.dismiss()) dismissClipboardSuggestion()""")
+    suggestion = java / "ime/bar/ui/ClipboardSuggestionUi.kt"
+    apply_edit(suggestion, "    val text =", """    fun setPreview(image: android.graphics.Bitmap?) {
+        if (image != null) icon.setImageBitmap(image)
+        else icon.setImageDrawable(ctx.getDrawable(R.drawable.ic_clipboard_24)?.mutate()?.apply { setTint(scope.colors.candidateTextColor) })
+    }
+
+    val text =""")
     apply_edit(input_bar, """                    ClipboardHelper.lastBean?.let {
                         AppUtils.launchClipEdit(context, it.id, ClipEditActivity.FROM_CLIPBOARD)
                     }""", """                    if (service.linkHistory.enabled) {
@@ -165,6 +190,8 @@ def apply_design(src, assets):
     apply_edit(ime, "    private lateinit var clipboardLink: com.osfans.trime.link.ClipboardLink",
                "    private lateinit var clipboardLink: com.osfans.trime.link.ClipboardLink\n"
                "    internal val linkHistory get() = clipboardLink.history")
+    apply_edit(ime, "    internal val linkHistory get() = clipboardLink.history",
+               "    internal val linkHistory get() = clipboardLink.history\n    internal val linkImages get() = clipboardLink.images")
     finish_view = "    override fun onFinishInputView(finishingInput: Boolean) {"
     apply_edit(ime, finish_view, """    override fun onWindowShown() {
         super.onWindowShown()

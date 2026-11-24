@@ -22,6 +22,7 @@ internal class LinkClipboard(
     private val settings: LinkSettings,
     private val scope: CoroutineScope,
     private val history: LinkHistory,
+    private val images: LinkImages,
     private val hasInputFocus: () -> Boolean,
 ) {
     private val clipboard = requireNotNull(context.getSystemService(ClipboardManager::class.java))
@@ -69,6 +70,7 @@ internal class LinkClipboard(
         if (!settings.allowsClipboard(pairing.record)) return
         val active = runCatching { Session(pairing, System.currentTimeMillis()) }.getOrNull() ?: return
         session = active
+        images.start(pairing)
         active.privateClip = runCatching { clipboard.primaryClipDescription }.getOrNull()?.let {
             it.isSensitive() && !it.trustedReceipt()
         } == true
@@ -86,6 +88,7 @@ internal class LinkClipboard(
     }
 
     private fun stopSession() {
+        images.stop()
         val previous = session ?: return
         session = null
         previous.pending = null
@@ -102,6 +105,7 @@ internal class LinkClipboard(
         val active = session?.takeIf { !currentOnly && isAuthorized(it) }
         if (active == null && !history.enabled) return
         val description = runCatching { clipboard.primaryClipDescription }.getOrNull()
+        if (active != null) images.changed(description)
         // Authenticated incoming items are recorded by receivePacket, never by an OS label.
         if (description?.isRemote() == true) {
             val receipt = description.trustedReceipt()
@@ -110,7 +114,7 @@ internal class LinkClipboard(
                 active.pending = null
                 active.privateClip = description.isSensitive()
             }
-            if (currentOnly && receipt) history.showRecordedPreview(description.timestamp)
+            if (currentOnly && receipt && !description.hasMimeType("image/*")) history.showRecordedPreview(description.timestamp)
             else if (!receipt) history.hidePreview()
             return
         }
@@ -203,9 +207,10 @@ internal class LinkClipboard(
         val envelope = data.opt("envelope") as? String ?: return
         val packet = ClipboardCodec.Packet(id, at, envelope)
         val text = runCatching { ClipboardCodec.open(active.inbound, ClipboardCodec.OWNER, packet) }.getOrNull() ?: return
-        if (text.isEmpty() || !isAuthorized(active) || !ClipboardCodec.isFresh(at)) return
+        if (text.isEmpty() || !isAuthorized(active) || !ClipboardCodec.isFresh(at) || !images.acceptsText(at)) return
         // Persist the authenticated high-water mark before exposing the data to the OS.
         if (!settings.recordClipboardReceipt(active.pairing.record, at)) return
+        images.textReceived(at)
         val clip = ClipData.newPlainText(REMOTE_LABEL, text)
         clip.description.extras = PersistableBundle().apply {
             putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
