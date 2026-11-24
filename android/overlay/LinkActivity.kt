@@ -51,6 +51,8 @@ class LinkActivity : ComponentActivity() {
     private lateinit var settings: LinkSettings
     private lateinit var status: TextView
     private lateinit var clipboardStatus: TextView
+    private lateinit var imageSharing: SwitchCompat
+    private lateinit var keepImageMetadata: SwitchCompat
     private lateinit var clearHistory: Button
     private lateinit var clipboardSection: LinearLayout
     private lateinit var scroll: ScrollView
@@ -166,8 +168,8 @@ class LinkActivity : ComponentActivity() {
             }
             pause = addSwitch(this, "暂停剪贴板收发与记录", "paused", false)
             clipboardStatus = addStatus(this, "", top = 8)
-            addSwitch(this, "图片互传", "images", false)
-            addSwitch(this, "发送时保留原图元数据（可能包含位置）", "imageMetadata", false)
+            imageSharing = addSwitch(this, "图片互传", "images", false)
+            keepImageMetadata = addSwitch(this, "发送时保留原图元数据（可能包含位置）", "imageMetadata", false)
             addStatus(this, "与已配对电脑自动收发 PNG、JPEG、WebP 和 GIF，每张最多 8 MiB。键盘顶栏可查看进度、取消或点选图片粘贴。")
             addSwitch(this, "保存本机剪贴板历史", "history", true)
             addStatus(this, "点键盘顶栏的「剪贴板」或复制预览即可查看、粘贴和删除。历史在本机加密保存，最多 50 条，保留 7 天。")
@@ -487,6 +489,7 @@ class LinkActivity : ComponentActivity() {
                     if (key == "share") syncAction.isEnabled = checked && settings.device() != null
                     if (key == "paused") showClipboardStatus(checked)
                     if (key == "images") {
+                        keepImageMetadata.isEnabled = checked
                         val paired = settings.clipboardPairing()
                         lifecycleScope.launch {
                             if (!checked) withContext(Dispatchers.IO) { LinkImageProvider.prune(this@LinkActivity, all = true) }
@@ -545,6 +548,10 @@ class LinkActivity : ComponentActivity() {
         removePairAction.visibility = if (device == null) View.GONE else View.VISIBLE
         bindingPreferences = true
         pause.isChecked = settings.prefs.getBoolean("paused", false)
+        imageSharing.isChecked = settings.prefs.getBoolean("images", false)
+        imageSharing.isEnabled = device != null
+        keepImageMetadata.isChecked = settings.prefs.getBoolean("imageMetadata", false)
+        keepImageMetadata.isEnabled = device != null && imageSharing.isChecked
         share.isChecked = settings.prefs.getBoolean("share", true)
         bindingPreferences = false
         share.isEnabled = device != null
