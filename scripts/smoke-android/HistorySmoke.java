@@ -16,6 +16,7 @@ import android.text.InputType;
 import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
+import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -103,10 +104,14 @@ public class HistorySmoke extends Instrumentation {
             SystemClock.sleep(85);
         }
         String[] committed = {""};
+        boolean[] composing = {false};
         for (int i = 0; i < 30; i++) {
-            runOnMainSync(() -> committed[0] = editor.getText().toString());
-            if ((prefix[0] + "nihao ").equals(committed[0])) return true;
-            if ((prefix[0] + "你好").equals(committed[0])) return false;
+            runOnMainSync(() -> {
+                committed[0] = editor.getText().toString();
+                composing[0] = BaseInputConnection.getComposingSpanStart(editor.getText()) >= 0;
+            });
+            if (!composing[0] && (prefix[0] + "nihao ").equals(committed[0])) return true;
+            if (!composing[0] && (prefix[0] + "你好").equals(committed[0])) return false;
             SystemClock.sleep(100);
         }
         throw new AssertionError("Language probe did not commit literal English or the expected Chinese phrase");

@@ -455,40 +455,76 @@ def prepare_android():
          '            setRuntimeOption("link_editor_ascii", com.osfans.trime.link.LinkInputOptions.keyboardForEditor(attribute).isNotEmpty())\n'
          '            val privateField = isNullType || com.osfans.trime.link.sensitiveEditor(attribute)'),
     ])
-    # Enforce ASCII at the engine boundary too: hardware Shift and schema changes
-    # can switch the engine while a protected field still has focus.
-    change(java / "core/Rime.kt", [
-        ("    private fun processKeyInner(value: Int, modifiers: Int, isVirtual: Boolean): Boolean {",
-         '''    private var linkPrivateEditor = false
+    rime = java / "core/Rime.kt"
+    code = rime.read_text(encoding="utf-8")
+    start = code.index("): Unit = withRimeContext {", code.index("    override suspend fun setRuntimeOption("))
+    body = code.index("\n", start) + 1
+    end = code.index("\n    }", body)
+    code = code[:body] + '''        when (option) {
+            "link_editor_ascii" -> editorMode.enter(value, getRimeOption("ascii_mode"))?.let {
+                setRimeOption("ascii_mode", it)
+            }
+            "link_user_ascii" -> setRimeOption("ascii_mode", editorMode.select(value))
+            "link_private" -> {
+                editorMode.privateField = value
+                setRimeOption(option, value)
+                applyEditorLanguage()
+            }
+            "ascii_mode" -> setRimeOption(option, editorMode.layout(value))
+            else -> setRimeOption(option, value)
+        }''' + code[end:]
+    # Replace this bounded section so both pristine and previously prepared checkouts converge.
+    key_start = code.index("    private fun processKeyInner(")
+    start = min((code.index(marker) for marker in ("    private var asciiBeforeField:", "    private var linkPrivateEditor", "    private val editorMode =")
+                 if marker in code), default=key_start)
+    end = code.index("        lastAsciiTipsText = asciiTipsText(getRimeStatus())", key_start)
+    code = code[:start] + '''    private val editorMode = com.osfans.trime.link.LinkEditorMode()
 
-    private fun protectPrivateEditor() {
-        if (linkPrivateEditor && !getRimeOption("ascii_mode")) setRimeOption("ascii_mode", true)
+    private fun applyEditorLanguage() {
+        val needed = editorMode.required() ?: return
+        if (getRimeOption("ascii_mode") != needed) setRimeOption("ascii_mode", needed)
     }
 
     private fun processKeyInner(value: Int, modifiers: Int, isVirtual: Boolean): Boolean {
-        protectPrivateEditor()'''),
-        ("        setRimeOption(option, value)", '''        if (option == "link_private") linkPrivateEditor = value
-        setRimeOption(option, value)
-        if (linkPrivateEditor && (option == "ascii_mode" || option == "link_private")) protectPrivateEditor()'''),
+        applyEditorLanguage()
+''' + code[end:]
+    code = code.replace("        protectPrivateEditor()", "        applyEditorLanguage()")
+    rime.write_text(code, encoding="utf-8")
+    change(rime, [
+        ("        val handled = processRimeKey(value, modifiers)\n        emitResponse()", '''        val hardwareShift = !isVirtual && (value == 0xffe1 || value == 0xffe2)
+        val before = if (hardwareShift) getRimeOption("ascii_mode") else false
+        val handled = processRimeKey(value, modifiers)
+        if (hardwareShift) {
+            val after = getRimeOption("ascii_mode")
+            if (before != after) editorMode.select(after)
+        }
+        applyEditorLanguage()
+        emitResponse()'''),
+        ("        clearRimeComposition()\n        emitResponse()", "        clearRimeComposition()\n        applyEditorLanguage()\n        emitResponse()"),
         ('    override suspend fun simulateKeySequence(sequence: String): Boolean = withRimeContext {\n'
          '        Timber.d("simulateKeySequence: $sequence")',
          '    override suspend fun simulateKeySequence(sequence: String): Boolean = withRimeContext {\n'
-         '        protectPrivateEditor()'),
+         '        applyEditorLanguage()'),
     ])
-    change(java / "core/Rime.kt", [
-        ("    private var linkPrivateEditor = false", "    private var asciiBeforeField: Boolean? = null\n    private var linkPrivateEditor = false"),
-        ('        if (option == "link_private") linkPrivateEditor = value', '''        if (option == "link_editor_ascii") {
-            if (value) {
-                if (asciiBeforeField == null) asciiBeforeField = getRimeOption("ascii_mode")
-                setRimeOption("ascii_mode", true)
-            } else {
-                asciiBeforeField?.let { setRimeOption("ascii_mode", it) }
-                asciiBeforeField = null
+    actions = java / "ime/keyboard/CommonKeyboardActionListener.kt"
+    code = actions.read_text(encoding="utf-8")
+    start = code.index("            private fun handleSwitchCharset(action: KeyAction) {")
+    end = code.index("            private fun handleLanguageSwitch(", start)
+    actions.write_text(code[:start] + '''            private fun handleSwitchCharset(action: KeyAction) {
+                val option = action.toggle.ifEmpty { return }
+                service.postRimeJob {
+                    if (option == "ascii_mode" && getRuntimeOption("link_private")) return@postRimeJob
+                    val next = !getRuntimeOption(option)
+                    val raw = if (option == "ascii_mode" && statusCached.isComposing) getRawInput() else ""
+                    setRuntimeOption(if (option == "ascii_mode") "link_user_ascii" else option, next)
+                    if (raw.isNotEmpty()) {
+                        service.commitText(raw)
+                        clearComposition()
+                    }
+                }
             }
-            return@withRimeContext
-        }
-        if (option == "link_private") linkPrivateEditor = value'''),
-    ])
+
+''' + code[end:], encoding="utf-8")
 
 
 def prepare_windows():
