@@ -9,6 +9,7 @@ from pathlib import Path
 options = argparse.ArgumentParser(description=__doc__)
 options.add_argument("--dll", type=Path, default=Path(".build/weasel-test-native/rime.dll"))
 options.add_argument("--shared", type=Path, default=Path(".build/weasel-bin/data"))
+options.add_argument("--data", type=Path, default=Path(".build/windows-data"), help="Prepared product schemas and dictionaries")
 args = options.parse_args()
 dll_path = args.dll.resolve()
 dll_folder = os.add_dll_directory(str(dll_path.parent))
@@ -42,10 +43,16 @@ class Commit(c.Structure):
 
 def run_suite(user):
     shared = args.shared.resolve()
-    shutil.copytree(".build/windows-data", user, dirs_exist_ok=True)
+    shutil.copytree(args.data, user, dirs_exist_ok=True)
     (user / "link_habits").mkdir(exist_ok=True)
+    # Exercise the same per-schema switch used by both clients' "pause learning" setting.
+    (user / "double_pinyin_mspy.custom.yaml").write_text(
+        "patch:\n  translator/enable_user_dict: false\n", encoding="utf-8")
     (user / "custom_phrase.txt").write_text(
-        "青柚竹筏\tzzqa\t99999\n青柚\tzzqb\t99999\n纸鹤锚点\tzzqc\t99999\n紫瓷圆盘\tzzqd\t99999\n",
+        "青柚竹筏\tzzqa\t99999\n青柚\tzzqb\t99999\n纸鹤锚点\tzzqc\t99999\n紫瓷圆盘\tzzqd\t99999\n"
+        "明天\tzzqe\t99999\n下午\tzzqf\t99999\n新式陶灯\tzzqg\t99999\n流光玻璃\tzzqh\t99999\n"
+        "晚些\tzzqi\t99999\n安排\tzzqj\t99999\n晚些安排\tzzqk\t99999\n"
+        "春汛\tzzql\t99999\n春讯\tzzql\t99998\n",
         encoding="utf-8")
     traits = Traits(c.sizeof(Traits)-4, str(shared).encode(), str(user).encode(), b"Shuangpin Link",
                     b"shuangpin-link", b"1", b"rime.habits-test", None, 2, b"", None, None)
@@ -109,6 +116,13 @@ def run_suite(user):
             index = menu().index(word)
             assert api("SelectCandidateOnCurrentPage", I, Z, Z)(session, index)
             assert commit() == word
+        def enter(code, word):
+            type_code(code)
+            choose(word)
+        def new_editor():
+            option("link_new_editor", True)
+            option("link_new_editor", False)
+            reset()
         for schema, full in ((b"double_pinyin_mspy", "nihk"), (b"rime_ice", "nihao")):
             assert api("SelectSchema", I, Z, S)(session, schema)
             reset()
@@ -159,9 +173,74 @@ def run_suite(user):
             assert menu()[0] == "你好" and not commit()
             reset()
             option("incognito_mode", False)
+            if schema == b"double_pinyin_mspy":
+                new_editor()
+                enter("m;tm", "明天")
+                enter("xwwu", "下午")
+                assert menu()[:3] == ["有空吗", "见", "开会"], menu()
+                new_editor()
+                enter("m;tm", "明天")
+                enter(full, "拟好")
+                new_editor()
+                enter("m;tm", "明天")
+                assert "拟好" not in menu(), menu()
+                new_editor()
             print(schema, "initials", type_code("zg"))
             assert "中国" in menu()
+            for spelling, word in (("hylj", "会议链接"), ("jtbls", "剪贴板历史")):
+                reset()
+                assert word in type_code(spelling), (schema, spelling, menu())
         reset()
+        # Public continuation works on a fresh profile, including when personal learning is suppressed.
+        option("incognito_mode", True)
+        for _ in range(2):
+            new_editor()
+            enter("zzqe", "明天")
+            assert menu()[:3] == ["见", "上午", "下午"], menu()
+            enter("zzqf", "下午")
+            assert menu()[:3] == ["有空吗", "见", "开会"], menu()
+        dismiss_prediction(0xff53)
+        enter("zzqf", "下午")
+        assert menu()[:3] != ["有空吗", "见", "开会"], menu()
+        option("link_private", True)
+        enter("zzqe", "明天")
+        assert not menu(), menu()
+        option("link_private", False)
+        option("incognito_mode", False)
+        # Both paths end with the same two words. The less frequent path needs its third word.
+        paths = [(("zzqg", "新式陶灯"), ("zzqc", "纸鹤锚点"), 1),
+                 (("zzqh", "流光玻璃"), ("zzqd", "紫瓷圆盘"), 3)]
+        for head, tail, repeats in paths:
+            for _ in range(repeats):
+                new_editor()
+                enter(*head)
+                enter("zzqi", "晚些")
+                enter("zzqj", "安排")
+                enter(*tail)
+        for middle in [[("zzqi", "晚些"), ("zzqj", "安排")], [("zzqk", "晚些安排")]]:
+            new_editor()
+            enter("zzqg", "新式陶灯")
+            for part in middle:
+                enter(*part)
+            assert menu()[0] == "纸鹤锚点", menu()
+        new_editor()
+        enter("zzqi", "晚些")
+        enter("zzqj", "安排")
+        assert menu()[0] == "紫瓷圆盘", menu()
+        # Global frequency favors one homophone. Inside a learned collocation the other wins.
+        for _ in range(3):
+            new_editor()
+            enter("zzql", "春汛")
+        for _ in range(2):
+            new_editor()
+            enter("zzqc", "纸鹤锚点")
+            enter("zzql", "春讯")
+        new_editor()
+        assert type_code("zzql")[0] == "春汛", menu()
+        new_editor()
+        enter("zzqc", "纸鹤锚点")
+        assert type_code("zzql")[0] == "春讯", menu()
+        new_editor()
         print("learn from 你好 → 企鹅")
         type_code("nihao")
         choose("你好")
@@ -242,7 +321,8 @@ def run_suite(user):
         # Further input above also trained other equally frequent successors.
         assert "企鹅" in menu(), menu()
         api("DestroySession", I, Z)(session)
-        print("Passed both schemas, frequency ranking, offline continuation, persistence, editor boundaries and email.")
+        print("Passed both schemas, public suggestions with learning paused, contextual homophones,"
+              " multi-word backoff, persistence, editor boundaries and email.")
     finally:
         api("Finalize", None)()
 

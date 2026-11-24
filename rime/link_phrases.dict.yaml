@@ -1,0 +1,123 @@
+# 常用通信短语与当代词汇。使用标准拼音和小幅权重，便于整词输入和简拼。
+---
+name: link_phrases
+version: "1"
+sort: by_weight
+...
+# 日常对话、出行和约时间
+快到了叫我	kuai dao le jiao wo	1200
+到了跟我说	dao le gen wo shuo	1400
+到了给我发消息	dao le gei wo fa xiao xi	1200
+我到楼下了	wo dao lou xia le	1400
+我在门口等你	wo zai men kou deng ni	1300
+你先进去吧	ni xian jin qu ba	1200
+等我两分钟	deng wo liang fen zhong	1200
+我马上出门	wo ma shang chu men	1350
+路上有点堵	lu shang you dian du	1200
+你到哪儿了	ni dao na er le	1250
+给我发个定位	gei wo fa ge ding wei	1450
+把地址发我	ba di zhi fa wo	1200
+到家说一声	dao jia shuo yi sheng	1300
+你方便的时候	ni fang bian de shi hou	1200
+回头再联系	hui tou zai lian xi	1250
+有空再聊	you kong zai liao	1250
+我先忙一会儿	wo xian mang yi hui er	1250
+看到了回你	kan dao le hui ni	1200
+我刚看到消息	wo gang kan dao xiao xi	1300
+消息收到了	xiao xi shou dao le	1250
+一会儿发给你	yi hui er fa gei ni	1250
+我再确认一下	wo zai que ren yi xia	1400
+麻烦发我一份	ma fan fa wo yi fen	1250
+收到我就告诉你	shou dao wo jiu gao su ni	1200
+有消息告诉我	you xiao xi gao su wo	1250
+帮我留意一下	bang wo liu yi yi xia	1200
+咱们明天见	zan men ming tian jian	1250
+周末有安排吗	zhou mo you an pai ma	1200
+一会儿见	yi hui er jian	1250
+待会儿聊	dai hui er liao	1250
+看你方便	kan ni fang bian	1250
+# 学习、办公和远程协作
+会议链接	hui yi lian jie	1800
+会议转写	hui yi zhuan xie	1000
+自动生成纪要	zi dong sheng cheng ji yao	900
+把会议链接发我	ba hui yi lian jie fa wo	1200
+我发个会议邀请	wo fa ge hui yi yao qing	1200
+共享屏幕	gong xiang ping mu	1800
+你能看到我的屏幕吗	ni neng kan dao wo de ping mu ma	1300
+我这边听不到	wo zhe bian ting bu dao	1250
+请打开麦克风	qing da kai mai ke feng	1200
+同步一下进度	tong bu yi xia jin du	1400
+有进展随时说	you jin zhan sui shi shuo	1200
+我把文档发你	wo ba wen dang fa ni	1200
+更新到最新版	geng xin dao zui xin ban	1300
+我已经提交了	wo yi jing ti jiao le	1250
+看下附件	kan xia fu jian	1250
+麻烦确认一下	ma fan que ren yi xia	1450
+协作文档	xie zuo wen dang	1250
+共享表格	gong xiang biao ge	1200
+只读链接	zhi du lian jie	1000
+访问权限	fang wen quan xian	1450
+开放访问权限	kai fang fang wen quan xian	1100
+稍后给你答复	shao hou gei ni da fu	1250
+复习计划	fu xi ji hua	1250
+错题整理	cuo ti zheng li	1250
+笔记共享	bi ji gong xiang	1000
+# 设备、软件和常见技术话题
+端侧模型	duan ce mo xing	1200
+端侧推理	duan ce tui li	1200
+端云协同	duan yun xie tong	950
+端侧智能	duan ce zhi neng	1100
+多模态模型	duo mo tai mo xing	1250
+多模态交互	duo mo tai jiao hu	1100
+多模态理解	duo mo tai li jie	1000
+视觉语言模型	shi jue yu yan mo xing	1100
+推理模型	tui li mo xing	1150
+本地大模型	ben di da mo xing	1200
+本地推理	ben di tui li	1100
+模型量化	mo xing liang hua	1150
+模型蒸馏	mo xing zheng liu	1050
+上下文窗口	shang xia wen chuang kou	1250
+检索增强生成	jian suo zeng qiang sheng cheng	1100
+工具调用	gong ju diao yong	1200
+编程智能体	bian cheng zhi neng ti	1050
+语音转写	yu yin zhuan xie	1200
+实时字幕	shi shi zi mu	1250
+屏幕共享	ping mu gong xiang	1500
+跨端同步	kua duan tong bu	1300
+剪贴板历史	jian tie ban li shi	1300
+设备配对	she bei pei dui	1300
+免密登录	mian mi deng lu	1100
+通行密钥	tong xing mi yao	1100
+点对点传输	dian dui dian chuan shu	1200
+离线可用	li xian ke yong	1250
+离线下载	li xian xia zai	1400
+离线语音识别	li xian yu yin shi bie	1100
+隐私计算	yin si ji suan	1100
+私有化部署	si you hua bu shu	1100
+热词更新	re ci geng xin	1100
+输入习惯	shu ru xi guan	1250
+# 消费服务、交通与日常生活
+预约取件	yu yue qu jian	1400
+上门取件	shang men qu jian	1500
+快递取件码	kuai di qu jian ma	1400
+放在门口就行	fang zai men kou jiu xing	1350
+麻烦放在前台	ma fan fang zai qian tai	1300
+请帮我备注一下	qing bang wo bei zhu yi xia	1200
+外卖到了	wai mai dao le	1400
+少冰少糖	shao bing shao tang	1100
+预估送达时间	yu gu song da shi jian	1100
+自助取餐	zi zhu qu can	1200
+电子小票	dian zi xiao piao	1200
+发票抬头	fa piao tai tou	1350
+候补购票	hou bu gou piao	1200
+行程变更	xing cheng bian geng	1100
+提前值机	ti qian zhi ji	1200
+无障碍出行	wu zhang ai chu xing	1200
+无障碍导航	wu zhang ai dao hang	1050
+充电站导航	chong dian zhan dao hang	1100
+剩余续航	sheng yu xu hang	1150
+预约充电	yu yue chong dian	1100
+充电价格	chong dian jia ge	1000
+分时电价	fen shi dian jia	1000
+换电站	huan dian zhan	1200
+绿色出行	lv se chu xing	1250

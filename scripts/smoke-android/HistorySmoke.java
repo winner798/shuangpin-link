@@ -52,6 +52,7 @@ public class HistorySmoke extends Instrumentation {
             keyboard(true);
             if (testArrows) {
                 verifyPassiveSuggestions();
+                verifyBundledWords();
                 result.putString("status", "Passive predictions yielded to editor actions and explicit selection worked");
                 finish(Activity.RESULT_OK, result);
                 return;
@@ -112,6 +113,32 @@ public class HistorySmoke extends Instrumentation {
             touch(key[0], key[1], 40);
             SystemClock.sleep(85);
         }
+    }
+
+    private void verifyBundledWords() {
+        runOnMainSync(() -> {
+            editor.setText("");
+            activity.getSystemService(InputMethodManager.class).restartInput(editor);
+        });
+        keyboard(true);
+        // Enter hylj using the visible keys. The old release lacks 会议链接 on this page.
+        for (int[] key : new int[][]{{644,1766},{595,1594},{966,1766},{750,1766}}) {
+            touch(key[0], key[1], 40);
+            SystemClock.sleep(85);
+        }
+        tap(awaitText("会议链接"));
+        waitForEditor("会议链接");
+        // Type mingtianxiawu. This context has never been used by the disposable editor.
+        for (int[] key : new int[][]{{860,1937},{807,1594},{754,1937},{538,1766},
+                {487,1594},{807,1594},{114,1766},{754,1937},{324,1937},{807,1594},
+                {114,1766},{165,1594},{700,1594}}) {
+            touch(key[0], key[1], 40);
+            SystemClock.sleep(85);
+        }
+        tap(awaitText("明天下午"));
+        waitForEditor("会议链接明天下午");
+        tap(awaitText("有空吗"));
+        waitForEditor("会议链接明天下午有空吗");
     }
 
     private void openPrediction() {

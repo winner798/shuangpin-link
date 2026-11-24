@@ -340,6 +340,15 @@ internal static class Program
         await SendChord(window, editor, Keys.Escape);
         await WaitFor(() => !CandidateWindowVisible(), "The candidate list remained after Escape.");
         editor.Clear();
+        await TypeCode(window, editor, "tianqi");
+        await SendChord(window, editor, Keys.Space);
+        await WaitFor(() => editor.Text == "天气" && CandidateWindowVisible(),
+            "The installed public lexicon did not offer a weather continuation.");
+        ClickFirstCandidate();
+        await WaitFor(() => editor.Text == "天气预报", "The first public continuation after 天气 did not insert 预报.");
+        await SendChord(window, editor, Keys.Escape);
+        editor.Clear();
+        Console.WriteLine("Verified that the installed public lexicon completes 天气 with 预报.");
         Console.WriteLine("Verified that a passive suggestion yields to Space, editor clicks and selection changes, and only a candidate click inserts a suggestion.");
     }
 

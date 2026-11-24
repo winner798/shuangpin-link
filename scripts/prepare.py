@@ -69,7 +69,7 @@ def download(name, url):
             time.sleep(2 ** attempt)
 
 
-def write_initials_index(source, destination):
+def write_initials_index(source, destination, phrases):
     # A small index makes common initialisms visible even when MSPY reads the same keys
     # as an exact syllable. The spelling algebra handles mixed and less common readings.
     choices = {}
@@ -83,7 +83,7 @@ def write_initials_index(source, destination):
             if not 2 <= len(syllables) <= 8 or not re.fullmatch(r"[\u3400-\u9fff]+", word):
                 continue
             score = int(weight)
-            if score < (1000 if len(syllables) == 2 else 30000):
+            if score < (1000 if len(syllables) == 2 else 8000):
                 continue
             code = "".join(s[0] for s in syllables)
             if not re.fullmatch("[a-z]+", code):
@@ -92,6 +92,24 @@ def write_initials_index(source, destination):
             top.append((score, word))
             top.sort(reverse=True)
             del top[3:]
+    # Keep the existing order for common readings; a curated phrase can fill a
+    # fourth place even when the same initials occur in three frequent words.
+    extra = {}
+    for line in phrases.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#") or "\t" not in line:
+            continue
+        word, reading, weight = line.split("\t")
+        syllables = reading.split()
+        if (not re.fullmatch(r"[\u3400-\u9fff]{3,12}", word) or len(syllables) != len(word)
+                or not all(re.fullmatch("[a-z]+", s) for s in syllables) or not weight.isdigit()):
+            raise ValueError(f"Invalid curated phrase: {line}")
+        code = "".join(s[0] for s in syllables)
+        extra.setdefault(code, []).append((int(weight), word))
+    for code, additions in extra.items():
+        top = choices.setdefault(code, [])
+        existing = {word for _, word in top}
+        top.extend(item for item in sorted(additions, reverse=True) if item[1] not in existing)
+        del top[4:]
     lines = [f'  ["{key}"] = "{" ".join(w for _, w in top)}",' for key, top in sorted(choices.items())]
     destination.write_text("return {\n" + "\n".join(lines) + "\n}\n", encoding="utf-8")
 
@@ -162,7 +180,22 @@ def copy_rime(destination, windows=False):
     shutil.copyfile(ROOT / "rime/link_profile.yaml", destination / "link_profile.yaml")
     for script in (ROOT / "rime").glob("link_*.lua"):
         shutil.copyfile(script, destination / "lua" / script.name)
-    write_initials_index(src / "cn_dicts/base.dict.yaml", destination / "lua/link_initials_data.lua")
+    phrases = ROOT / "rime/link_phrases.dict.yaml"
+    shutil.copyfile(phrases, destination / "cn_dicts" / phrases.name)
+    dictionary = destination / "rime_ice.dict.yaml"
+    contents = dictionary.read_text(encoding="utf-8")
+    # Appending the table preserves native weights for words already in Rime Ice.
+    contents, count = re.subn(r"(?m)^  - cn_dicts/others\b[^\n]*$", r"\g<0>\n  - cn_dicts/link_phrases",
+                              contents, count=1)
+    if count != 1:
+        raise RuntimeError("Rime Ice import tables changed")
+    dictionary.write_text(contents, encoding="utf-8")
+    write_initials_index(src / "cn_dicts/base.dict.yaml", destination / "lua/link_initials_data.lua", phrases)
+    dictionaries = destination / "cn_dicts"
+    runpy.run_path(str(ROOT / "scripts/build_continuations.py"))["build_continuations"](
+        (dictionaries / "base.dict.yaml", dictionaries / "link_phrases.dict.yaml"),
+        ROOT / "rime/public_continuations.tsv", destination / "lua/link_public_words_data.lua",
+    )
     if not windows:
         shutil.copyfile(ROOT / "rime/english_corrections.tsv", destination / "english_corrections.tsv")
     shutil.copyfile(download("predict.db", "https://github.com/rime/librime-predict/releases/download/data-1.0/predict.db"),

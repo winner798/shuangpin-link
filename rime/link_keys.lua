@@ -70,7 +70,8 @@ return function(key, env)
     end
     if key:ctrl() or key:alt() or key:super() or
        code == 0xff0d or code == 0xff1b or code == 0xff09 or
-       (ctx.input == "" and (code == 0xff08 or code == 0xffff or (code >= 0xff50 and code <= 0xff57))) then
+       (ctx.input == "" and ((code >= 32 and code < 127 and (code < 97 or code > 122)) or
+         code == 0xff08 or code == 0xffff or (code >= 0xff50 and code <= 0xff57))) then
         ctx:set_property("link_break", "1")
     end
     return noop
