@@ -279,6 +279,8 @@ internal sealed partial class LinkWindow
             token.ThrowIfCancellationRequested();
             if (!AcceptImage(image) || sequence != PrivateClipboard.Sequence || !InteractiveDesktop()) return;
             Directory.CreateDirectory(ImageCache);
+            if (File.GetAttributes(ImageCache).HasFlag(FileAttributes.ReparsePoint))
+                throw new InvalidDataException("图片暂存目录无效。");
             string ext = info.Mime switch { "image/jpeg" => "jpg", "image/png" => "png", "image/webp" => "webp",
                 "image/gif" => "gif", _ => throw new InvalidDataException("图片格式不支持。") };
             path = Path.Combine(ImageCache, Guid.NewGuid().ToString("N") + "." + ext);
@@ -310,7 +312,7 @@ internal sealed partial class LinkWindow
     {
         try
         {
-            if (!Directory.Exists(ImageCache)) return;
+            if (!Directory.Exists(ImageCache) || File.GetAttributes(ImageCache).HasFlag(FileAttributes.ReparsePoint)) return;
             var files = new DirectoryInfo(ImageCache).EnumerateFiles()
                 .Where(f => Guid.TryParseExact(Path.GetFileNameWithoutExtension(f.Name), "N", out _))
                 .OrderByDescending(f => f.LastWriteTimeUtc);
