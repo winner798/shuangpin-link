@@ -18,6 +18,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 
 /** Runs only against the disposable test editor and a fresh emulator. */
 public class HistorySmoke extends Instrumentation {
@@ -76,19 +77,27 @@ public class HistorySmoke extends Instrumentation {
         }
     }
 
-    private void resetField(int type) {
+    private void focusField(EditText target) {
+        editor = target;
         runOnMainSync(() -> {
-            editor.setInputType(type);
-            editor.setText("");
-            activity.getSystemService(InputMethodManager.class).restartInput(editor);
+            editor.requestFocus();
+            editor.setSelection(editor.length());
         });
         keyboard(true);
-        SystemClock.sleep(400);
+        boolean[] active = {false};
+        for (int i = 0; i < 30; i++) {
+            runOnMainSync(() -> active[0] = editor.hasFocus() && activity.getSystemService(InputMethodManager.class).isActive(editor));
+            if (active[0]) { SystemClock.sleep(350); return; }
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError("Target editor did not acquire IME focus");
     }
 
     private boolean typeModeSample() {
         // Full Pinyin was selected earlier in the test. The exact committed result
         // distinguishes Chinese from ASCII, including the trailing ASCII space.
+        String[] prefix = {""};
+        runOnMainSync(() -> prefix[0] = editor.getText().toString());
         for (int[] key : new int[][]{{754,1937},{807,1594},{644,1766},{114,1766},{914,1594},{530,2108}}) {
             touch(key[0], key[1], 40);
             SystemClock.sleep(85);
@@ -96,32 +105,43 @@ public class HistorySmoke extends Instrumentation {
         String[] committed = {""};
         for (int i = 0; i < 30; i++) {
             runOnMainSync(() -> committed[0] = editor.getText().toString());
-            if ("nihao ".equals(committed[0])) return true;
-            if ("你好".equals(committed[0])) return false;
+            if ((prefix[0] + "nihao ").equals(committed[0])) return true;
+            if ((prefix[0] + "你好").equals(committed[0])) return false;
             SystemClock.sleep(100);
         }
         throw new AssertionError("Language probe did not commit literal English or the expected Chinese phrase");
     }
 
     private void verifyPrivateFieldModeRestoration() {
-        int normal = InputType.TYPE_CLASS_TEXT;
-        int password = normal | InputType.TYPE_TEXT_VARIATION_PASSWORD;
-        for (boolean english : new boolean[]{false, true}) {
-            resetField(normal);
-            if (typeModeSample() != english) {
-                resetField(normal);
+        EditText normal = editor;
+        EditText[] password = new EditText[1];
+        runOnMainSync(() -> {
+            password[0] = new EditText(activity);
+            password[0].setSingleLine(true);
+            password[0].setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            ((LinearLayout) normal.getParent()).addView(password[0], new LinearLayout.LayoutParams(-1, -2));
+        });
+        focusField(normal);
+        boolean initialEnglish = typeModeSample();
+        for (boolean english : new boolean[]{initialEnglish, !initialEnglish}) {
+            if (english != initialEnglish) {
                 touch(789, 2108, 45);
-                SystemClock.sleep(200);
-                if (typeModeSample() != english) throw new AssertionError("Could not select the requested language");
+                SystemClock.sleep(300);
+                if (typeModeSample() != english) throw new AssertionError("Normal editor did not switch to " + (english ? "English" : "Chinese"));
             }
-            resetField(password);
+            focusField(password[0]);
             touch(789, 2108, 45);
             if (!typeModeSample()) throw new AssertionError("Password field accepted Chinese composition");
             copy("Unmarked private test fixture", false);
-            resetField(normal);
-            if (typeModeSample() != english) throw new AssertionError("Password field changed the previous language");
+            focusField(normal);
+            if (typeModeSample() != english) throw new AssertionError("Password field did not restore " + (english ? "English" : "Chinese"));
         }
-        resetField(normal);
+        runOnMainSync(() -> {
+            ((LinearLayout) normal.getParent()).removeView(password[0]);
+            normal.setText("");
+            activity.getSystemService(InputMethodManager.class).restartInput(normal);
+        });
+        keyboard(true);
     }
 
     private void waitForEditor(String expected) {
