@@ -77,17 +77,17 @@ inline bool PasswordControl(HWND focus) {
       (GetWindowLongPtrW(focus, GWL_STYLE) & ES_PASSWORD);
 }
 
+// GUID_PROP_INPUTSCOPE from the Windows SDK, without an extra DLL import.
+inline constexpr GUID InputScopeProperty = {0x1713dd5a, 0x68e7, 0x4a5b,
+                          {0x9a, 0xf6, 0x59, 0x2a, 0x59, 0x5c, 0x77, 0x8d}};
+
 inline bool IsPlainText(ITfContext* context, ITfRange* range, TfEditCookie edit,
                         bool forLearning = false) {
   if (PasswordControl(GetFocus()))
     return false;
 
-  // GUID_PROP_INPUTSCOPE is published by the Windows SDK. Resolve it without
-  // imposing an additional import on the text service.
-  const GUID inputScope = {0x1713dd5a, 0x68e7, 0x4a5b,
-                          {0x9a, 0xf6, 0x59, 0x2a, 0x59, 0x5c, 0x77, 0x8d}};
   com_ptr<ITfReadOnlyProperty> property;
-  if (FAILED(context->GetAppProperty(inputScope, &property)) || !property)
+  if (FAILED(context->GetAppProperty(InputScopeProperty, &property)) || !property)
     return true;
   CComVariant value;
   if (property->GetValue(edit, range, &value) != S_OK || value.vt == VT_EMPTY)

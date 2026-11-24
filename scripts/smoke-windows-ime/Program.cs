@@ -96,6 +96,20 @@ internal static class Program
 
                     await AssertCommit(window, editor, args[0], "nihao", "full-pinyin");
                     await AssertEnglishCorrection(window, editor, args[0]);
+                    using (var masked = new TextBox { Dock = DockStyle.Top, UseSystemPasswordChar = true })
+                    {
+                        window.Controls.Add(masked);
+                        masked.BringToFront();
+                        masked.Focus();
+                        await WaitFor(() => masked.Focused, "The disposable password field did not get focus.");
+                        foreach (var key in new[] { Keys.N, Keys.I, Keys.H, Keys.A, Keys.O, Keys.Space })
+                        {
+                            SendChord(key);
+                            await Task.Delay(80);
+                        }
+                        await WaitFor(() => masked.Text == "nihao ", "A password field did not receive literal keys.");
+                        editor.Focus();
+                    }
                     await HistoryFixture.Run(args[0]);
                     await AssertClipboardPrivacy(window.Handle);
                     status = 0;

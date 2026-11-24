@@ -164,6 +164,20 @@ fs::path WeaselUserDataPath() {
     replace(tsf / 'ThreadMgrEventSink.cpp', '  _InitTextEditSink(pDocMgrFocus);',
             '  if (pDocMgrFocus != pDocMgrPrevFocus) _linkFocusedContext.Release();\n'
             '  _InitTextEditSink(pDocMgrFocus);')
+    edits = tsf / 'TextEditSink.cpp'
+    replace(edits, '#include "WeaselTSF.h"', '#include "WeaselTSF.h"\n#include "EnglishCorrection.h"')
+    replace(edits, '  /* did the selection change? */', '''  // Some hosts reuse a document context while changing a field's privacy scope.
+  const GUID* scope = &link_english::InputScopeProperty;
+  com_ptr<IEnumTfRanges> changedScopes;
+  if (pContext == _linkFocusedContext.p &&
+      pEditRecord->GetTextAndPropertyUpdates(0, &scope, 1, &changedScopes) == S_OK && changedScopes) {
+    com_ptr<ITfRange> changed;
+    ULONG count = 0;
+    if (changedScopes->Next(1, &changed, &count) == S_OK && count)
+      _linkFocusedContext.Release();
+  }
+
+  /* did the selection change? */''')
     replace(tsf / 'WeaselTSF.cpp', '  m_client.StartSession();',
             '  m_client.StartSession();\n  _linkFocusedContext.Release();')
     for test in (True, False):
