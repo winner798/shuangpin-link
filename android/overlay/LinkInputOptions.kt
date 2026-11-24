@@ -11,6 +11,16 @@ import java.io.File
 import java.util.Locale
 
 internal object LinkInputOptions {
+    fun keyboardForEditor(info: EditorInfo): String {
+        val type = info.inputType and InputType.TYPE_MASK_CLASS
+        if (type == InputType.TYPE_CLASS_NUMBER || type == InputType.TYPE_CLASS_PHONE || type == InputType.TYPE_CLASS_DATETIME) return "number"
+        if (type == InputType.TYPE_NULL || sensitiveEditor(info) ||
+            info.imeOptions and EditorInfo.IME_FLAG_FORCE_ASCII != 0) return ".ascii"
+        val variation = info.inputType and InputType.TYPE_MASK_VARIATION
+        return if (type == InputType.TYPE_CLASS_TEXT && (variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
+                variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS)) ".ascii" else ""
+    }
+
     private const val FUZZY_PATCH = """patch:
   double_pinyin_mspy:
     __include: link_spellings:/double_pinyin_mspy_fuzzy

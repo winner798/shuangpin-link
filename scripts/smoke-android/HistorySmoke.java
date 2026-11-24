@@ -12,6 +12,7 @@ import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.PersistableBundle;
 import android.os.SystemClock;
+import android.text.InputType;
 import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
@@ -40,6 +41,7 @@ public class HistorySmoke extends Instrumentation {
             activity = startActivitySync(open);
             editor = activity.findViewById(android.R.id.content).findViewWithTag("sampleEditor");
             keyboard(true);
+            verifyPrivateFieldModeRestoration();
             // Use the symbol printed over Z on the real 1080-pixel portrait keyboard.
             touch(216, 1937, 750);
             touch(540, 1766, 35);
@@ -72,6 +74,54 @@ public class HistorySmoke extends Instrumentation {
             result.putString("error", failure.toString());
             finish(Activity.RESULT_CANCELED, result);
         }
+    }
+
+    private void resetField(int type) {
+        runOnMainSync(() -> {
+            editor.setInputType(type);
+            editor.setText("");
+            activity.getSystemService(InputMethodManager.class).restartInput(editor);
+        });
+        keyboard(true);
+        SystemClock.sleep(400);
+    }
+
+    private boolean typeModeSample() {
+        // Full Pinyin was selected earlier in the test. The exact committed result
+        // distinguishes Chinese from ASCII, including the trailing ASCII space.
+        for (int[] key : new int[][]{{754,1937},{807,1594},{644,1766},{114,1766},{914,1594},{530,2108}}) {
+            touch(key[0], key[1], 40);
+            SystemClock.sleep(85);
+        }
+        String[] committed = {""};
+        for (int i = 0; i < 30; i++) {
+            runOnMainSync(() -> committed[0] = editor.getText().toString());
+            if ("nihao ".equals(committed[0])) return true;
+            if ("你好".equals(committed[0])) return false;
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError("Language probe did not commit literal English or the expected Chinese phrase");
+    }
+
+    private void verifyPrivateFieldModeRestoration() {
+        int normal = InputType.TYPE_CLASS_TEXT;
+        int password = normal | InputType.TYPE_TEXT_VARIATION_PASSWORD;
+        for (boolean english : new boolean[]{false, true}) {
+            resetField(normal);
+            if (typeModeSample() != english) {
+                resetField(normal);
+                touch(789, 2108, 45);
+                SystemClock.sleep(200);
+                if (typeModeSample() != english) throw new AssertionError("Could not select the requested language");
+            }
+            resetField(password);
+            touch(789, 2108, 45);
+            if (!typeModeSample()) throw new AssertionError("Password field accepted Chinese composition");
+            copy("Unmarked private test fixture", false);
+            resetField(normal);
+            if (typeModeSample() != english) throw new AssertionError("Password field changed the previous language");
+        }
+        resetField(normal);
     }
 
     private void waitForEditor(String expected) {

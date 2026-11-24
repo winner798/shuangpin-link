@@ -417,13 +417,30 @@ def prepare_android():
          "            })\n"
          "            addCategory(R.string.storage)"),
     ])
-    change(java / "ime/keyboard/KeyboardWindow.kt", [
-        ("        switchKeyboard(targetKeyboard)\n        val isAsciiMode", 
-         "        val privateField = com.osfans.trime.link.sensitiveEditor(info)\n"
-         '        switchKeyboard(if (privateField) ".ascii" else targetKeyboard)\n'
-         "        val isAsciiMode"),
-        ('        if (targetKeyboard == ".ascii" || targetKeyboard == "number") {',
-         '        if (privateField || targetKeyboard == ".ascii" || targetKeyboard == "number") {'),
+    keyboard = java / "ime/keyboard/KeyboardWindow.kt"
+    # The engine owns the temporary ASCII override. Views can be created or hidden
+    # independently of editor focus, notably for TYPE_NULL fields in settings.
+    keyboard_source = keyboard.read_text(encoding="utf-8")
+    start = keyboard_source.index("    override fun onStartInput(info: EditorInfo) {")
+    end = keyboard_source.index("    private fun dispatchCapsState(", start)
+    keyboard_source = keyboard_source[:start] + '''    override fun onStartInput(info: EditorInfo) {
+        switchKeyboard(com.osfans.trime.link.LinkInputOptions.keyboardForEditor(info), applyLayoutMode = false)
+    }
+
+''' + keyboard_source[end:]
+    keyboard.write_text(keyboard_source.replace("    private var tempAsciiMode: Boolean? = null\n", ""), encoding="utf-8")
+    change(keyboard, [
+        ("fun switchKeyboard(to: String) {", "fun switchKeyboard(to: String, applyLayoutMode: Boolean = true) {"),
+        ("private fun attachKeyboard(target: String) {", "private fun attachKeyboard(target: String, applyLayoutMode: Boolean = true) {"),
+        ("private fun detachCurrentView() {", "private fun detachCurrentView(saveMode: Boolean = true) {"),
+        ("        activeKeyboard?.lastAsciiMode = rime.run { statusCached }.isAsciiMode",
+         "        if (saveMode) activeKeyboard?.lastAsciiMode = rime.run { statusCached }.isAsciiMode"),
+        ("            if (currentMode != targetMode) {", "            if (applyLayoutMode && currentMode != targetMode) {"),
+        ('        attachKeyboard(evalKeyboard(".default"))', '        attachKeyboard(evalKeyboard(".default"), applyLayoutMode = false)'),
+        ("            detachCurrentView()\n            attachKeyboard(target)",
+         "            detachCurrentView(saveMode = applyLayoutMode)\n            attachKeyboard(target, applyLayoutMode)"),
+        ("        detachCurrentView()\n        if (isAll)", "        detachCurrentView(saveMode = false)\n        if (isAll)"),
+        ("        attachKeyboard(id)\n    }", "        attachKeyboard(id, applyLayoutMode = false)\n    }"),
     ])
     runpy.run_path(str(ROOT / "android/apply_design.py"))["apply_design"](src, assets)
     change(service, [
@@ -432,6 +449,11 @@ def prepare_android():
             setRuntimeOption("incognito_mode", privateField)
             setRuntimeOption("link_new_editor", !getRuntimeOption("link_new_editor"))
             setNullInputType(isNullType)'''),
+    ])
+    change(service, [
+        ('            val privateField = isNullType || com.osfans.trime.link.sensitiveEditor(attribute)',
+         '            setRuntimeOption("link_editor_ascii", com.osfans.trime.link.LinkInputOptions.keyboardForEditor(attribute).isNotEmpty())\n'
+         '            val privateField = isNullType || com.osfans.trime.link.sensitiveEditor(attribute)'),
     ])
     # Enforce ASCII at the engine boundary too: hardware Shift and schema changes
     # can switch the engine while a protected field still has focus.
@@ -452,6 +474,20 @@ def prepare_android():
          '        Timber.d("simulateKeySequence: $sequence")',
          '    override suspend fun simulateKeySequence(sequence: String): Boolean = withRimeContext {\n'
          '        protectPrivateEditor()'),
+    ])
+    change(java / "core/Rime.kt", [
+        ("    private var linkPrivateEditor = false", "    private var asciiBeforeField: Boolean? = null\n    private var linkPrivateEditor = false"),
+        ('        if (option == "link_private") linkPrivateEditor = value', '''        if (option == "link_editor_ascii") {
+            if (value) {
+                if (asciiBeforeField == null) asciiBeforeField = getRimeOption("ascii_mode")
+                setRimeOption("ascii_mode", true)
+            } else {
+                asciiBeforeField?.let { setRimeOption("ascii_mode", it) }
+                asciiBeforeField = null
+            }
+            return@withRimeContext
+        }
+        if (option == "link_private") linkPrivateEditor = value'''),
     ])
 
 
