@@ -19,6 +19,9 @@ import org.json.JSONObject;
 /** The disposable emulator signs this instrumentation and the IME with the same temporary key. */
 public class PairedImageSmoke extends Instrumentation {
     private Bundle args;
+    private void phase(String message) {
+        Bundle update=new Bundle(); update.putString("imagePhase",message); sendStatus(1,update);
+    }
     @Override public void onCreate(Bundle args) { super.onCreate(args); this.args=args; start(); }
     @Override public void onStart() {
         Bundle output = new Bundle();
@@ -44,7 +47,7 @@ public class PairedImageSmoke extends Instrumentation {
                     .setBlockModes("GCM").setEncryptionPaddings("NoPadding").setKeySize(256).build());
                 key=gen.generateKey();
             }
-            String device = new JSONObject().put("server","https://localhost:18766").put("token",args.getString("token"))
+            String device = new JSONObject().put("server","https://10.0.2.2:18766").put("token",args.getString("token"))
                 .put("key",args.getString("key")).toString();
             Cipher gcm=Cipher.getInstance("AES/GCM/NoPadding");
             gcm.init(Cipher.ENCRYPT_MODE,key);
@@ -62,13 +65,16 @@ public class PairedImageSmoke extends Instrumentation {
                 byte[] discard = new byte[512];
                 while (started.read(discard) >= 0) { }
             }
-            boolean tapped=false;
+            boolean tapped=false, copied=false;
             String last="";
             long end=SystemClock.uptimeMillis()+65000;
             while(SystemClock.uptimeMillis()<end) {
                 for (AccessibilityWindowInfo window : ui.getWindows()) {
                     AccessibilityNodeInfo root=window.getRoot();
                     if(root==null) continue;
+                    if (!copied && !root.findAccessibilityNodeInfosByText("Synthetic image copied").isEmpty()) {
+                        copied=true; phase("Source editor copied the synthetic PNG");
+                    }
                     if (!root.findAccessibilityNodeInfosByText("Verified image pasted").isEmpty()) {
                         output.putString("status","Paired Android image upload, receive and rich paste verified");
                         finish(Activity.RESULT_OK,output);return;
@@ -83,7 +89,7 @@ public class PairedImageSmoke extends Instrumentation {
                             tap.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
                             ui.injectInputEvent(tap,true);tap.recycle();
                         }
-                        tapped=true;
+                        tapped=true; phase("Received image thumbnail tapped");
                     }
                 }
                 SystemClock.sleep(200);

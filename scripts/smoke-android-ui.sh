@@ -220,7 +220,6 @@ grep -F 'text="the "' "$output/android-editor-english.xml" >/dev/null
 adb shell am instrument -w "$preview/.HistorySmoke" | tee "$output/android-clipboard-history.txt"
 grep -F 'Clipboard preview, paste, deletion and sensitive exclusion verified' "$output/android-clipboard-history.txt" >/dev/null
 
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' \
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=Android image smoke' -addext 'subjectAltName=IP:10.0.2.2' \
     -keyout "$work/key.pem" -out "$work/cert.pem" >/dev/null 2>&1
-adb reverse tcp:18766 tcp:18766
 /usr/bin/python3 "$(dirname "$0")/smoke-android/image_relay.py" "$work" | tee "$output/android-paired-image.txt"
