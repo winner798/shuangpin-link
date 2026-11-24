@@ -68,8 +68,17 @@ def run_suite(user):
             result = value.text.decode()
             api("FreeCommit", I, c.POINTER(Commit))(c.byref(value))
             return result
-        def key(code):
-            return api("ProcessKey", I, Z, I, I)(session, code, 0)
+        def key(code, modifiers=0):
+            return api("ProcessKey", I, Z, I, I)(session, code, modifiers)
+        def dismiss_prediction(arrow, modifiers=0):
+            assert menu(), "Expected post-commit suggestions before moving the caret"
+            # False passes the original keystroke to the editor, including modifiers.
+            assert not key(arrow, modifiers), "Prediction consumed the cursor movement"
+            assert not menu() and not commit(), "Moving the caret selected or retained a prediction"
+            assert not key(arrow, modifiers | (1 << 30)), "Prediction consumed the key release"
+            assert not menu() and not commit()
+            reset()  # A host may refresh composition after moving its selection.
+            assert not menu(), "A host selection update resurrected a dismissed prediction"
         def type_code(code):
             for ch in code:
                 assert key(ord(ch)), ch
@@ -88,7 +97,16 @@ def run_suite(user):
             reset()
             print(schema, "full", type_code(full))
             assert "你好" == menu()[0]
+            option("incognito_mode", True)  # Exercise the bundled predictor without training the frequency fixture.
+            for arrow in (0xff51, 0xff53):
+                choose("你好")
+                dismiss_prediction(arrow)
+                assert type_code(full)[0] == "你好"
+            # Left during an unfinished spelling must keep the pending composition.
+            key(0xff51)
+            assert menu() and not commit()
             reset()
+            option("incognito_mode", False)
             print(schema, "initials", type_code("zg"))
             assert "中国" in menu()
         reset()
@@ -103,7 +121,7 @@ def run_suite(user):
         choose("你好")
         print("learned prediction", menu())
         assert menu()[0] == "企鹅"
-        reset()
+        dismiss_prediction(0xff51, 1)  # Shift+Left extends the editor's selection.
         type_code("zzqa")
         choose("青柚竹筏")
         type_code("qie")
@@ -116,6 +134,9 @@ def run_suite(user):
         type_code("zzqb")
         choose("青柚")
         assert menu()[0] == "竹筏", menu()
+        dismiss_prediction(0xff53, 4)  # Ctrl+Right moves a word, even for personal-only suggestions.
+        type_code("zzqb")
+        choose("青柚")
         assert key(32) and commit() == "竹筏"
         reset()
         type_code("zzqc")

@@ -1,4 +1,4 @@
-local accepted, noop = 1, 2
+local rejected, accepted, noop = 0, 1, 2
 local domains = require("link_domains")
 
 local function domain_prefix(prefix)
@@ -14,6 +14,15 @@ return function(key, env)
     if ctx:get_option("link_private") then return noop end
     local code = key.keycode
     local segment = ctx.composition:back()
+    if (code == 0xff51 or code == 0xff53) and ctx.input == "" and segment
+       and (segment:has_tag("prediction") or segment:has_tag("link_personal")) then
+        ctx:set_property("link_break", "1")
+        -- A pass-through boundary ends the predictor's previous-word context.
+        -- Without it, a later editor selection update can recreate the menu.
+        ctx.commit_history:push("thru", "")
+        ctx:clear()
+        return rejected -- Pass the original arrow and its modifiers to the editor.
+    end
     if segment and segment:has_tag("link_email") then
         if key:ctrl() or key:alt() or key:super() then
             env.engine:commit_text(ctx.input)

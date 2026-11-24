@@ -13,6 +13,7 @@ import android.os.Bundle;
 import android.os.PersistableBundle;
 import android.os.SystemClock;
 import android.text.InputType;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
@@ -26,11 +27,16 @@ public class HistorySmoke extends Instrumentation {
     private UiAutomation ui;
     private EditText editor;
     private Activity activity;
+    private boolean testArrows;
     private static final String SAMPLE = "Pearl clipboard sample " +
         "01234567890123456789012345678901234567890123456789012345678901234567890123456789";
     private static final String PRIVATE = "Excluded test fixture";
 
-    @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
+    @Override public void onCreate(Bundle args) {
+        super.onCreate(args);
+        testArrows = args != null && "arrows".equals(args.getString("scenario"));
+        start();
+    }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
@@ -43,6 +49,13 @@ public class HistorySmoke extends Instrumentation {
             activity = startActivitySync(open);
             editor = activity.findViewById(android.R.id.content).findViewWithTag("sampleEditor");
             keyboard(true);
+            if (testArrows) {
+                verifyArrow(KeyEvent.KEYCODE_DPAD_LEFT, 3);
+                verifyArrow(KeyEvent.KEYCODE_DPAD_RIGHT, 5);
+                result.putString("status", "Left and Right dismissed predictions and moved the cursor once");
+                finish(Activity.RESULT_OK, result);
+                return;
+            }
             verifyPrivateFieldModeRestoration();
             // Use the symbol printed over Z on the real 1080-pixel portrait keyboard.
             touch(216, 1937, 750);
@@ -94,15 +107,47 @@ public class HistorySmoke extends Instrumentation {
         throw new AssertionError("Target editor did not acquire IME focus");
     }
 
+    private void typeNihaoAndSpace() {
+        for (int[] key : new int[][]{{754,1937},{807,1594},{644,1766},{114,1766},{914,1594},{530,2108}}) {
+            touch(key[0], key[1], 40);
+            SystemClock.sleep(85);
+        }
+    }
+
+    private void verifyArrow(int key, int expectedCursor) {
+        runOnMainSync(() -> {
+            editor.setText("ABCD");
+            editor.setSelection(2);
+            activity.getSystemService(InputMethodManager.class).restartInput(editor);
+        });
+        keyboard(true);
+        typeNihaoAndSpace();
+        String committed = "AB你好CD";
+        waitForEditor(committed);
+        // A fresh dictionary suggests 吗 after 你好. Check the candidate before sending
+        // the key so an empty/disabled prediction menu cannot make the test pass.
+        awaitText("吗");
+        sendKeyDownUpSync(key);
+        boolean[] moved = {false};
+        for (int i = 0; i < 40; i++) {
+            runOnMainSync(() -> moved[0] = editor.getSelectionStart() == expectedCursor
+                && editor.getSelectionEnd() == expectedCursor && committed.contentEquals(editor.getText()));
+            if (moved[0] && find("吗") == null) {
+                typeNihaoAndSpace();
+                waitForEditor(committed.substring(0, expectedCursor) + "你好" + committed.substring(expectedCursor));
+                return;
+            }
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError(KeyEvent.keyCodeToString(key) + " did not dismiss predictions and move exactly once");
+    }
+
     private boolean typeModeSample() {
         // Full Pinyin was selected earlier in the test. The exact committed result
         // distinguishes Chinese from ASCII, including the trailing ASCII space.
         String[] prefix = {""};
         runOnMainSync(() -> prefix[0] = editor.getText().toString());
-        for (int[] key : new int[][]{{754,1937},{807,1594},{644,1766},{114,1766},{914,1594},{530,2108}}) {
-            touch(key[0], key[1], 40);
-            SystemClock.sleep(85);
-        }
+        typeNihaoAndSpace();
         String[] committed = {""};
         boolean[] composing = {false};
         for (int i = 0; i < 30; i++) {

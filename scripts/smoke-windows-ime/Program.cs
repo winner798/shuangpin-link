@@ -80,7 +80,7 @@ internal static class Program
                     await WaitFor(() => LoadedModule(args[1]), "The registered 双拼互联 DLL was not loaded by the editor.");
                     Console.WriteLine($"Windows activated 双拼互联 ({ProductClass}, {ProductProfile}) and loaded {args[1]}.");
 
-                    await AssertCommit(window, editor, args[0], "nihk", "microsoft-double-pinyin");
+                    await AssertCommit(window, editor, args[0], "nihk", "microsoft-double-pinyin", Keys.Left);
 
                     await SendChord(window, editor, Keys.ControlKey, Keys.Oemtilde);
                     await Task.Delay(600);
@@ -91,7 +91,7 @@ internal static class Program
                     await SendChord(window, editor, Keys.Enter);
                     await Task.Delay(550);
 
-                    await AssertCommit(window, editor, args[0], "nihao", "full-pinyin");
+                    await AssertCommit(window, editor, args[0], "nihao", "full-pinyin", Keys.Right);
                     await AssertEnglishCorrection(window, editor, args[0]);
                     using (var masked = new TextBox { Dock = DockStyle.Top, UseSystemPasswordChar = true })
                     {
@@ -232,11 +232,14 @@ internal static class Program
         }
     }
 
-    private static async Task AssertCommit(Form window, RichTextBox editor, string output, string keys, string name)
+    private static async Task AssertCommit(Form window, RichTextBox editor, string output, string keys, string name, Keys arrow)
     {
         if (editor.Text.Length != 0)
             throw new InvalidOperationException($"The editor was not empty before {name}: [{editor.Text}]");
         await EnsureFocus(window, editor);
+        // Leave editable text on both sides so a missed or duplicated arrow is observable.
+        editor.Text = "甲乙丙";
+        editor.Select(1, 0);
 
         foreach (char key in keys)
         {
@@ -246,14 +249,40 @@ internal static class Program
         await Task.Delay(430);
         SaveScreen(window, output, name + "-candidates");
         await SendChord(window, editor, Keys.Space);
-        await WaitFor(() => editor.Text == "你好", $"{name} did not commit 你好 after typing {keys}.");
-        await SendChord(window, editor, Keys.Escape);
-        await Task.Delay(250);
-        if (editor.Text != "你好")
-            throw new InvalidOperationException($"{name} composition did not remain committed after Escape.");
+        const string original = "甲你好乙丙";
+        await WaitFor(() => editor.Text == original && editor.SelectionStart == 3,
+            $"{name} did not commit 你好 at the expected position.");
+        await WaitFor(CandidateWindowVisible, $"{name} did not show the post-commit prediction window.");
         SaveScreen(window, output, name + "-committed");
-        Console.WriteLine($"{name}: {keys} + Space committed {editor.Text} in an independent editor.");
+        await SendChord(window, editor, arrow);
+        int nextCaret = arrow == Keys.Left ? 2 : 4;
+        await WaitFor(() => editor.Text == original && editor.SelectionStart == nextCaret
+            && editor.SelectionLength == 0 && !CandidateWindowVisible(),
+            $"{name} {arrow} did not dismiss suggestions and move the caret exactly once (caret {editor.SelectionStart}).");
+        foreach (char key in keys)
+        {
+            await SendChord(window, editor, (Keys)char.ToUpperInvariant(key));
+            await Task.Delay(80);
+        }
+        await SendChord(window, editor, Keys.Space);
+        await WaitFor(() => editor.Text == original.Insert(nextCaret, "你好"), $"{name} could not continue Chinese input at the new caret.");
+        await SendChord(window, editor, Keys.Escape);
+        await WaitFor(() => !CandidateWindowVisible(), $"{name} did not close the final candidate list.");
+        Console.WriteLine($"{name}: {arrow} closed the visible prediction list, moved the caret once, and kept Chinese typing active.");
         editor.Clear();
+    }
+
+    private static bool CandidateWindowVisible()
+    {
+        // The installed TSF creates its non-activating tool popup on this editor's UI thread.
+        const long candidateStyles = 0x08000000 | 0x00000080 | 0x00000008; // NOACTIVATE | TOOLWINDOW | TOPMOST
+        bool found = false;
+        EnumThreadWindows(GetCurrentThreadId(), (hwnd, _) =>
+        {
+            found = IsWindowVisible(hwnd) && (GetWindowLongPtr(hwnd, -20).ToInt64() & candidateStyles) == candidateStyles;
+            return !found;
+        }, 0);
+        return found;
     }
 
     private static async Task AssertEnglishCorrection(Form window, RichTextBox editor, string output)
@@ -421,11 +450,20 @@ internal static class Program
     private static Input KeyInput(Keys key, bool release) => new()
     {
         Type = 1, // INPUT_KEYBOARD
-        Data = new InputData { Keyboard = new KeyboardInput { Key = (ushort)key, Flags = release ? 2u : 0u } },
+        Data = new InputData { Keyboard = new KeyboardInput { Key = (ushort)key,
+            Flags = (release ? 2u : 0u) | (key is Keys.Left or Keys.Right ? 1u : 0u) } },
     };
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    private delegate bool EnumWindow(nint hwnd, nint parameter);
+    [DllImport("user32.dll")]
+    private static extern bool EnumThreadWindows(uint threadId, EnumWindow callback, nint parameter);
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(nint hwnd);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern nint GetWindowLongPtr(nint hwnd, int index);
 
     [DllImport("user32.dll")]
     private static extern IntPtr WindowFromPoint(Point point);

@@ -158,6 +158,11 @@ adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor-full-pinyin.xml"
 grep -F 'text="你好"' "$output/android-editor-full-pinyin.xml" >/dev/null
 
+# Exercise actual hardware direction keys while the on-screen keyboard is showing
+# a post-commit prediction. Keep the existing Chinese scheme selected for both keys.
+adb shell am instrument -w -e scenario arrows "$preview/.HistorySmoke" | tee "$output/android-arrow-navigation.txt"
+grep -F 'Left and Right dismissed predictions and moved the cursor once' "$output/android-arrow-navigation.txt" >/dev/null
+
 # Enable the actual opt-in switch before exercising the on-screen English keys.
 adb shell am force-stop "$preview"
 adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "$package"
