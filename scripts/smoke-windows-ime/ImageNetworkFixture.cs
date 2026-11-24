@@ -3,6 +3,8 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Diagnostics;
+using System.Text;
 using ShuangpinLink;
 
 internal static class ImageNetworkFixture
@@ -33,7 +35,7 @@ internal static class ImageNetworkFixture
         form.Shown += async (_, _) =>
         {
             try { await Verify(Read(path), Path.GetDirectoryName(path)!); exit = 0; }
-            catch (Exception error) { Console.Error.WriteLine(error); }
+            catch (Exception error) { CaptureControlStatus(); Console.Error.WriteLine(error); }
             finally { Clipboard.Clear(); form.Close(); }
         };
         Application.Run(form);
@@ -61,6 +63,9 @@ internal static class ImageNetworkFixture
         screenshot.Save(original, ImageFormat.Png);
         byte[] expected = ImageFormats.WithoutMetadata(await File.ReadAllBytesAsync(original, token));
         Clipboard.SetFileDropList(new StringCollection { original });
+        await Task.Delay(550, token);
+        var probe = ClipboardImages.Capture(0, PrivateClipboard.Sequence);
+        Console.WriteLine($"Synthetic file is readable: {probe?.ReadImage(false).Length == expected.Length}; private marker: {Clipboard.GetDataObject() is { } d && PrivateClipboard.IsProtected(d)}");
         Manifest? sent = null;
         while (sent == null)
             sent = await peer.Send<Manifest>(HttpMethod.Get, "image?after=0&wait=2", token, protocol: "v3");
@@ -94,5 +99,36 @@ internal static class ImageNetworkFixture
             await Task.Delay(100, token);
         }
         Console.WriteLine("Installed Windows tray uploaded a copied multi-block PNG and received a peer JPEG through the authenticated TLS relay.");
+    }
+
+    private delegate bool EnumCallback(nint handle, nint data);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumCallback cb, nint data);
+    [DllImport("user32.dll")] private static extern bool EnumChildWindows(nint handle, EnumCallback cb, nint data);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint handle, out uint pid);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern nint SendMessageTimeoutW(nint hwnd, uint message, nint wp, StringBuilder lp, uint flags, uint ms, out nint result);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern nint SendMessageTimeoutW(nint hwnd, uint message, nint wp, nint lp, uint flags, uint ms, out nint result);
+
+    static void CaptureControlStatus()
+    {
+        // Only the installed test application's non-editable status controls are printed.
+        var ids = Process.GetProcessesByName("ShuangpinLink").Select(p => (uint)p.Id).ToHashSet();
+        EnumWindows((parent, _) =>
+        {
+            GetWindowThreadProcessId(parent, out uint pid);
+            if (!ids.Contains(pid)) return true;
+            void Visit(bool selectTab) => EnumChildWindows(parent, (child, param) =>
+            {
+                var text = new StringBuilder(160);
+                SendMessageTimeoutW(child, 0x000d, text.Capacity, text, 2, 500, out nint result);
+                string value = text.ToString();
+                if (selectTab && value == "设备互通") SendMessageTimeoutW(child, 0x00f5, 0, 0, 2, 500, out result);
+                if (!selectTab && (value.Contains("图片") || value.Contains("配对") || value.Contains("剪贴板") || value.Contains("图片通道")))
+                    Console.WriteLine("Installed status: " + value);
+                return true;
+            }, 0);
+            Visit(true);
+            Visit(false);
+            return true;
+        }, 0);
     }
 }

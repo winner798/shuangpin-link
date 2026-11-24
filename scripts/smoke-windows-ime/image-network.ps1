@@ -34,9 +34,11 @@ try {
         $_.SessionId -eq (Get-Process -Id $PID).SessionId -and $_.Path -eq $AppPath
     } | ForEach-Object { $_.Kill(); $_.WaitForExit(5000) | Out-Null }
     dotnet $Editor --seed-image-pair $pair
-    $app = Start-Process -FilePath $AppPath -ArgumentList '--tray' -WindowStyle Hidden -PassThru
+    $app = Start-Process -FilePath $AppPath -WindowStyle Hidden -PassThru
     dotnet $Editor --image-roundtrip $pair
 } finally {
+    $routes = Join-Path $scratch 'routes.txt'
+    if (Test-Path -LiteralPath $routes) { Get-Content -LiteralPath $routes -Tail 65 }
     if ($app -and !$app.HasExited) { $app.Kill(); $app.WaitForExit(5000) | Out-Null }
     if ($bg -and !$bg.HasExited) { $bg.Kill(); $bg.WaitForExit(5000) | Out-Null }
     $store.Remove($cert)
