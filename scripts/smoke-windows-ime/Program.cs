@@ -300,6 +300,10 @@ internal static class Program
         editor.Select(0, 1);
         await WaitFor(() => editor.SelectionLength == 1 && !CandidateWindowVisible(), "Changing the host selection kept suggestions open.");
 
+        await OpenSuggestions();
+        editor.SelectedText = "测";
+        await WaitFor(() => editor.Text == "甲你好测乙" && !CandidateWindowVisible(), "An external editor change kept suggestions open.");
+
         editor.Text = "甲乙";
         editor.Select(1, 0);
         await TypeCode(window, editor, "nihao");

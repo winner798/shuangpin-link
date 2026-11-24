@@ -66,6 +66,31 @@ LRESULT CALLBACK WeaselTSF::_LinkEditorMessage(HWND window, UINT message, WPARAM
                                                LPARAM lParam, UINT_PTR id, DWORD_PTR) {
   // This is the focused editor HWND only. An explicit click on a candidate is
   // delivered to the separate TSF popup. Always continue the editor's message.
+  const bool replacesText = message == WM_SETTEXT || message == EM_REPLACESEL || message == EM_STREAMIN;
+  if (message == EM_SETSEL || message == EM_EXSETSEL || replacesText) {
+    // Native Edit/RichEdit can change selection without reporting an OnEndEdit,
+    // including when their WinForms wrapper selects a range programmatically.
+    wchar_t name[160]{};
+    GetClassNameW(window, name, ARRAYSIZE(name));
+    const bool edit = _wcsicmp(name, L"Edit") == 0 || _wcsnicmp(name, L"RichEdit", 8) == 0 ||
+                      _wcsnicmp(name, L"WindowsForms10.EDIT.", 20) == 0 ||
+                      _wcsnicmp(name, L"WindowsForms10.RichEdit", 23) == 0;
+    if (edit && replacesText) {
+      reinterpret_cast<WeaselTSF*>(id)->_EndLinkPrediction(true);
+    } else if (edit) {
+      com_ptr<WeaselTSF> service(reinterpret_cast<WeaselTSF*>(id));
+      com_ptr<ITfContext> original = service->_linkPredictionContext;
+      DWORD previousStart = 0, previousEnd = 0, nextStart = 0, nextEnd = 0;
+      SendMessageW(window, EM_GETSEL, reinterpret_cast<WPARAM>(&previousStart), reinterpret_cast<LPARAM>(&previousEnd));
+      const LRESULT result = DefSubclassProc(window, message, wParam, lParam);
+      if (service->_linkPredictionContext.p == original.p && service->_linkPredictionWindow == window) {
+        SendMessageW(window, EM_GETSEL, reinterpret_cast<WPARAM>(&nextStart), reinterpret_cast<LPARAM>(&nextEnd));
+        if (previousStart != nextStart || previousEnd != nextEnd)
+          service->_EndLinkPrediction(true);
+      }
+      return result;
+    }
+  }
   switch (message) {
     case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: case WM_XBUTTONDOWN:
 #ifdef WM_POINTERDOWN
