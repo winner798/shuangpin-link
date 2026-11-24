@@ -57,10 +57,7 @@ internal static class Program
         {
             try
             {
-                window.Activate();
-                editor.Focus();
-                await WaitFor(() => GetForegroundWindow() == window.Handle && editor.Focused,
-                    "The isolated Windows session did not give focus to the test editor.");
+                await EnsureFocus(window, editor);
                 object manager = CreateComObject(ProfileManager);
                 try
                 {
@@ -85,13 +82,13 @@ internal static class Program
 
                     await AssertCommit(window, editor, args[0], "nihk", "microsoft-double-pinyin");
 
-                    SendChord(Keys.ControlKey, Keys.Oemtilde);
+                    await SendChord(window, editor, Keys.ControlKey, Keys.Oemtilde);
                     await Task.Delay(600);
                     SaveScreen(window, args[0], "input-scheme-picker");
                     // In the Rime scheme picker, pressing the hotkey again advances to the next scheme.
-                    SendChord(Keys.ControlKey, Keys.Oemtilde);
+                    await SendChord(window, editor, Keys.ControlKey, Keys.Oemtilde);
                     await Task.Delay(180);
-                    SendChord(Keys.Enter);
+                    await SendChord(window, editor, Keys.Enter);
                     await Task.Delay(550);
 
                     await AssertCommit(window, editor, args[0], "nihao", "full-pinyin");
@@ -100,11 +97,10 @@ internal static class Program
                     {
                         window.Controls.Add(masked);
                         masked.BringToFront();
-                        masked.Focus();
-                        await WaitFor(() => masked.Focused, "The disposable password field did not get focus.");
+                        await EnsureFocus(window, masked);
                         foreach (var key in new[] { Keys.N, Keys.I, Keys.H, Keys.A, Keys.O, Keys.Space })
                         {
-                            SendChord(key);
+                            await SendChord(window, masked, key);
                             await Task.Delay(80);
                         }
                         await WaitFor(() => masked.Text == "nihao ", "A password field did not receive literal keys.");
@@ -240,19 +236,18 @@ internal static class Program
     {
         if (editor.Text.Length != 0)
             throw new InvalidOperationException($"The editor was not empty before {name}: [{editor.Text}]");
-        if (GetForegroundWindow() != window.Handle || !editor.Focused)
-            throw new InvalidOperationException("The test editor lost keyboard focus.");
+        await EnsureFocus(window, editor);
 
         foreach (char key in keys)
         {
-            SendChord((Keys)char.ToUpperInvariant(key));
+            await SendChord(window, editor, (Keys)char.ToUpperInvariant(key));
             await Task.Delay(110);
         }
         await Task.Delay(430);
         SaveScreen(window, output, name + "-candidates");
-        SendChord(Keys.Space);
+        await SendChord(window, editor, Keys.Space);
         await WaitFor(() => editor.Text == "你好", $"{name} did not commit 你好 after typing {keys}.");
-        SendChord(Keys.Escape);
+        await SendChord(window, editor, Keys.Escape);
         await Task.Delay(250);
         if (editor.Text != "你好")
             throw new InvalidOperationException($"{name} composition did not remain committed after Escape.");
@@ -286,11 +281,11 @@ internal static class Program
             await Task.Delay(300);
             foreach (var key in new[] { Keys.T, Keys.E, Keys.H })
             {
-                SendChord(key);
+                await SendChord(window, editor, key);
                 await Task.Delay(70);
             }
             await WaitFor(() => editor.Text == "teh", "The editor did not receive the English literal before Space.");
-            SendChord(Keys.Space);
+            await SendChord(window, editor, Keys.Space);
             try { await WaitFor(() => editor.Text == "the ", "The native English corrector did not replace teh on Space."); }
             catch (InvalidOperationException error)
             {
@@ -298,11 +293,11 @@ internal static class Program
             }
             SaveScreen(window, output, "english-corrected");
             Console.WriteLine("English mode: teh + Space committed the corrected word in an independent editor.");
-            SendChord(Keys.ShiftKey, Keys.D2);
+            await SendChord(window, editor, Keys.ShiftKey, Keys.D2);
             await Task.Delay(180);
-            SendChord(Keys.G);
+            await SendChord(window, editor, Keys.G);
             await Task.Delay(180);
-            SendChord(Keys.Tab);
+            await SendChord(window, editor, Keys.Tab);
             await WaitFor(() => editor.Text == "the @gmail.com", "The English email candidate did not complete @g.");
         }
         finally
@@ -371,8 +366,48 @@ internal static class Program
             ? buffer.ToString() : $"unavailable ({Marshal.GetLastPInvokeError()})";
     }
 
-    private static void SendChord(params Keys[] keys)
+    private static async Task EnsureFocus(Form window, Control field)
     {
+        bool Ready() => GetForegroundWindow() == window.Handle && field.Focused;
+        if (Ready()) return;
+        // Setup starts the settings window asynchronously. It can become foreground after the editor is shown.
+        // A real click in the editor form's empty padding can activate it even under the foreground lock.
+        for (int attempt = 0; attempt < 12; attempt++)
+        {
+            window.Activate();
+            field.Focus();
+            await Task.Delay(100);
+            if (!Ready())
+            {
+                bool topmost = window.TopMost;
+                try
+                {
+                    window.TopMost = true;
+                    Point pad = window.PointToScreen(new Point(8, 8));
+                    Cursor.Position = pad;
+                    if (WindowFromPoint(pad) == window.Handle)
+                    {
+                        var click = new Input[2];
+                        click[0].Data.Mouse.Flags = 0x0002; // MOUSEEVENTF_LEFTDOWN
+                        click[1].Data.Mouse.Flags = 0x0004; // MOUSEEVENTF_LEFTUP
+                        if (SendInput(2, click, Marshal.SizeOf<Input>()) != 2)
+                            throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not activate the isolated editor.");
+                        await Task.Delay(100);
+                    }
+                    field.Focus();
+                }
+                finally { window.TopMost = topmost; }
+            }
+            await Task.Delay(150);
+            if (Ready()) return;
+        }
+        GetWindowThreadProcessId(GetForegroundWindow(), out uint foreground);
+        throw new InvalidOperationException($"Could not focus the isolated editor. Foreground PID {foreground}, editor PID {Environment.ProcessId}.");
+    }
+
+    private static async Task SendChord(Form window, Control field, params Keys[] keys)
+    {
+        await EnsureFocus(window, field);
         var inputs = new Input[keys.Length * 2];
         for (var i = 0; i < keys.Length; i++)
         {
@@ -391,6 +426,12 @@ internal static class Program
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(Point point);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
