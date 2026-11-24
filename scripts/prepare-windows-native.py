@@ -31,6 +31,12 @@ def replace_pattern(path, pattern, after):
 
 def add_passive_predictions(source, native):
     tsf = source / 'WeaselTSF'
+    # TSF translates both digit rows into Rime key events. Preserve the Windows
+    # modifier too, so a shell shortcut cannot arrive as a plain candidate number.
+    replace(tsf / 'KeyEvent.cpp', '  if (kinfo.isKeyUp)', '''  if (((keyState[VK_LWIN] | keyState[VK_RWIN]) & KEY_DOWN) != 0)
+    result.mask |= ibus::SUPER_MASK;
+
+  if (kinfo.isKeyUp)''')
     handler = source / 'RimeWithWeasel/RimeWithWeasel.cpp'
     ipc = source / 'include/WeaselIPC.h'
     client = source / 'WeaselIPC/WeaselClientImpl.cpp'

@@ -342,17 +342,48 @@ internal static class Program
             "Clicking a suggested word did not insert it.");
         await SendChord(window, editor, Keys.Escape);
         await WaitFor(() => !CandidateWindowVisible(), "The candidate list remained after Escape.");
-        editor.Clear();
-        await TypeCode(window, editor, "tianqi");
-        await SendChord(window, editor, Keys.Space);
-        await WaitFor(() => editor.Text == "天气" && CandidateWindowVisible(),
-            "The installed public lexicon did not offer a weather continuation.");
+        async Task OpenWeather()
+        {
+            editor.Clear();
+            await TypeCode(window, editor, "tianqi");
+            await SendChord(window, editor, Keys.Space);
+            await WaitFor(() => editor.Text == "天气" && CandidateWindowVisible(),
+                "The installed public lexicon did not offer a weather continuation.");
+        }
+
+        await OpenWeather();
         ClickFirstCandidate();
         await WaitFor(() => editor.Text == "天气预报", "The first public continuation after 天气 did not insert 预报.");
         await SendChord(window, editor, Keys.Escape);
+        await OpenWeather();
+        await SendChord(window, editor, Keys.D1);
+        await WaitFor(() => editor.Text == "天气预报", "Top-row 1 did not pick the first visible continuation.");
+        await SendChord(window, editor, Keys.Escape);
+        bool turnOnNumLock = !Control.IsKeyLocked(Keys.NumLock);
+        try
+        {
+            if (turnOnNumLock) await SendChord(window, editor, Keys.NumLock);
+            await OpenWeather();
+            await SendChord(window, editor, Keys.NumPad2);
+            await WaitFor(() => editor.Text == "天气怎么样", "Numpad 2 did not pick the second visible continuation.");
+            await SendChord(window, editor, Keys.Escape);
+        }
+        finally
+        {
+            if (turnOnNumLock && Control.IsKeyLocked(Keys.NumLock)) await SendChord(window, editor, Keys.NumLock);
+        }
+        await OpenWeather();
+        // Each page has at most seven numbered entries. No 8 label can be offered.
+        await SendChord(window, editor, Keys.D8);
+        await WaitFor(() => editor.Text == "天气8" && !CandidateWindowVisible(), "An unlabelled digit was swallowed.");
+        await SendChord(window, editor, Keys.D2);
+        await WaitFor(() => editor.Text == "天气82", "A digit without a prediction was intercepted.");
+        await OpenWeather();
+        await SendChord(window, editor, Keys.ControlKey, Keys.D2);
+        await WaitFor(() => editor.Text == "天气" && !CandidateWindowVisible(), "Ctrl+2 selected a prediction.");
         editor.Clear();
-        Console.WriteLine("Verified that the installed public lexicon completes 天气 with 预报.");
-        Console.WriteLine("Verified that a passive suggestion yields to Space, editor clicks and selection changes, and only a candidate click inserts a suggestion.");
+        Console.WriteLine("Verified numbered prediction picks from both digit rows, unmatched and ordinary digits, and Ctrl+2.");
+        Console.WriteLine("Verified that passive suggestions yield to Space, editor clicks and selection changes, and accept candidate clicks.");
     }
 
     private static void ClickAt(Point point, nint expectedWindow)

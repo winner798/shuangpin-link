@@ -116,6 +116,12 @@ def run_suite(user):
             index = menu().index(word)
             assert api("SelectCandidateOnCurrentPage", I, Z, Z)(session, index)
             assert commit() == word
+        def choose_prediction(code, index, modifiers=0):
+            expected = menu()[index]
+            assert not key(code, modifiers | (1 << 30)) and menu()[index] == expected
+            assert key(code, modifiers), (hex(code), expected)
+            assert commit() == expected, (hex(code), expected)
+            assert not key(code, modifiers | (1 << 30)) and not commit()
         def enter(code, word):
             type_code(code)
             choose(word)
@@ -137,7 +143,8 @@ def run_suite(user):
             key(0xff51)
             assert menu() and not commit()
             reset()
-            for code, modifiers in ((32,0), (0xff0d,0), (0xff09,0), (0xff1b,0), (49,0), (55,0), (48,0),
+            for code, modifiers in ((32,0), (0xff0d,0), (0xff09,0), (0xff1b,0), (56,0), (48,0),
+                                    (0xffb9,16), (49,1), (50,4), (0xffb1,8),
                                     (0xff08,0), (0xffff,0), (0xff52,0), (0xff54,0), (0xff55,0),
                                     (0xff50,0), (0xff57,0), (0xff53,1), (ord("c"),4),
                                     (ord("q"),8), (0xffbe,0), (ord(","),0), (ord("@"),0),
@@ -148,6 +155,13 @@ def run_suite(user):
             option("prediction", True)
             type_code(full)
             choose("你好")
+            for index in range(len(menu())):
+                for zero, modifiers in ((ord("1"), 0), (0xffb1, 16)):
+                    new_editor()
+                    enter(full, "你好")
+                    choose_prediction(zero + index, index, modifiers)
+            new_editor()
+            enter(full, "你好")
             assert not key(32, 1 << 30) and menu()  # Releasing the commit key keeps the offered words tappable.
             click_candidate(menu()[0])
             type_code(full)
@@ -264,6 +278,13 @@ def run_suite(user):
         reset()
         type_code("zzqb")
         choose("青柚")
+        assert menu() == ["竹筏"], menu()
+        handled = key(ord("2"))
+        assert commit() == ("2" if handled else "") and not menu()
+        enter("zzqb", "青柚")
+        choose_prediction(ord("1"), 0)
+        new_editor()
+        enter("zzqb", "青柚")
         assert menu()[0] == "竹筏", menu()
         dismiss_prediction(0xff53, 4)  # Ctrl+Right moves a word, even for personal-only suggestions.
         type_code("zzqb")

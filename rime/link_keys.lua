@@ -1,6 +1,6 @@
 local accepted, noop = 1, 2
 local domains = require("link_domains")
-local dismiss_prediction = require("link_prediction")
+local prediction = require("link_prediction")
 
 local function domain_prefix(prefix)
     for _, domain in ipairs(domains) do
@@ -13,7 +13,7 @@ return function(key, env)
     if key:release() then return noop end
     local ctx = env.engine.context
     local code = key.keycode
-    dismiss_prediction(ctx, key)
+    if prediction.process_key(ctx, key, env.engine.schema) then return accepted end
     if ctx:get_option("link_private") then return noop end
     local segment = ctx.composition:back()
     if segment and segment:has_tag("link_email") then

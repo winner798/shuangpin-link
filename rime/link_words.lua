@@ -4,7 +4,7 @@ local db, users = nil, 0
 local MAX_CHOICES, MAX_CHARS, TIMEOUT = 16, 16, 90
 local MAX_CONTEXT_WORDS, MAX_CONTEXT_CHARS = 4, 24
 local filter = {}
-local dismiss_prediction = require("link_prediction")
+local prediction_menu = require("link_prediction")
 local public_words = require("link_public_words")
 
 local function is_han(code)
@@ -139,7 +139,7 @@ function filter.init(env)
     env.commit = ctx.commit_notifier:connect(function(context) remember(context, env) end)
     env.option = ctx.option_update_notifier:connect(function(context, name)
         if name == "link_dismiss_prediction" then
-            if not dismiss_prediction(context) and context.input == "" then reset(env) end
+            if not prediction_menu.dismiss(context) and context.input == "" then reset(env) end
         elseif name == "link_new_editor" or name == "link_private" or name == "incognito_mode" or name == "ascii_mode" then
             reset(env)
         end

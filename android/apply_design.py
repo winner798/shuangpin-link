@@ -187,6 +187,70 @@ def apply_design(src, assets):
                     if (service.hookKeyboard(keyEventCode, m)) {''')
 
     ime = java / "ime/core/TrimeInputMethodService.kt"
+    forward_event = "    private fun forwardKeyEvent(event: KeyEvent): Boolean {"
+    apply_edit(ime, forward_event, """    private val linkEditorChords = mutableSetOf<Pair<Int, Int>>()
+
+""" + forward_event + """
+        val numberRow = event.keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9
+        val numberPad = event.keyCode in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9
+        if (numberRow || numberPad) {
+            val key = event.deviceId to event.keyCode
+            if (event.action == KeyEvent.ACTION_UP && linkEditorChords.remove(key)) return false
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                if (event.repeatCount == 0) linkEditorChords.remove(key)
+                if (key in linkEditorChords) return false
+                val shortcut = event.isCtrlPressed || event.isAltPressed || event.isMetaPressed ||
+                    (numberPad && !event.isNumLockOn && event.unicodeChar == 0)
+                if (shortcut && rime.run { hasLinkPrediction }) {
+                    // Deliver the original down, repeats and up to the same editor.
+                    linkEditorChords.add(key)
+                    dismissLinkPrediction()
+                    return false
+                }
+            }
+        }""")
+
+    # The compact list starts at global index zero. Number only slots selectable
+    # on the highlighted page. The popup already carries the engine's page labels.
+    schema = java / "core/RimeSchema.kt"
+    apply_edit(schema, "    val alphabet: String", "    val pageSize: Int\n    val alphabet: String")
+    apply_edit(schema, '            alphabet = it.getString("speller/alphabet") ?: ""',
+               '            pageSize = it.getInt("menu/page_size")\n'
+               '                ?: RimeConfig.openConfig("default").use { defaults -> defaults.getInt("menu/page_size") } ?: 5\n'
+               '            alphabet = it.getString("speller/alphabet") ?: ""')
+    engine = java / "core/Rime.kt"
+    api = java / "core/RimeApi.kt"
+    apply_edit(api, "    val hasMenu: Boolean", "    val hasLinkPrediction: Boolean\n\n    val hasMenu: Boolean")
+    apply_edit(engine, "    override var hasMenu: Boolean = false", """    @Volatile
+    override var hasLinkPrediction = false
+        private set
+
+    override var hasMenu: Boolean = false""")
+    emit_candidates = "        when (val candidates = response.candidates) {"
+    apply_edit(engine, emit_candidates, """        hasLinkPrediction = response.candidates.candidates.isNotEmpty() && getRimeRawInput().isEmpty()
+""" + emit_candidates)
+    emit_bulk = "            is Candidates.Bulk -> handleRimeMessage(9, arrayOf(candidates))"
+    apply_edit(engine, emit_bulk, """            is Candidates.Bulk -> {
+                val pageSize = schemaCached.pageSize
+                if (hasLinkPrediction && pageSize > 0) {
+                    val items = candidates.candidates
+                    val first = candidates.highlighted.coerceAtLeast(0) / pageSize * pageSize
+                    for (slot in 0 until minOf(pageSize, 10, items.size - first)) {
+                        val index = first + slot
+                        items[index] = items[index].copy(label = ((slot + 1) % 10).toString())
+                    }
+                }
+                handleRimeMessage(9, arrayOf(candidates))
+            }""")
+    candidate_ui = java / "ime/candidates/CandidateItemUi.kt"
+    apply_edit(candidate_ui, "        text.text = item.text", """        text.text = if (item.label.isEmpty()) item.text else {
+            android.text.SpannableString("${item.label} ${item.text}").apply {
+                val end = item.label.length
+                val flag = android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                setSpan(android.text.style.RelativeSizeSpan(0.7f), 0, end, flag)
+                setSpan(android.text.style.ForegroundColorSpan(cColor), 0, end, flag)
+            }
+        }""")
     apply_edit(ime, "    private lateinit var clipboardLink: com.osfans.trime.link.ClipboardLink",
                "    private lateinit var clipboardLink: com.osfans.trime.link.ClipboardLink\n"
                "    internal val linkHistory get() = clipboardLink.history")

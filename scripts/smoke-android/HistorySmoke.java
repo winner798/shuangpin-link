@@ -182,6 +182,7 @@ public class HistorySmoke extends Instrumentation {
     }
 
     private void verifyPassiveSuggestions() {
+        verifyPredictionDigits();
         verifyArrow(KeyEvent.KEYCODE_DPAD_LEFT, 3);
         verifyArrow(KeyEvent.KEYCODE_DPAD_RIGHT, 5);
         openPrediction();
@@ -232,6 +233,55 @@ public class HistorySmoke extends Instrumentation {
         keyboard(true);
         waitForPredictionToClose();
         waitForEditor("AB你好CD");
+    }
+
+    private void verifyPredictionDigits() {
+        openPrediction();
+        String first = awaitText("1 ").getText().toString().substring(2);
+        sendKeyDownUpSync(KeyEvent.KEYCODE_1);
+        waitForEditor("AB你好" + first + "CD");
+
+        openPrediction();
+        String second = awaitText("2 ").getText().toString().substring(2);
+        // W carries the printed 2 on the portrait keyboard.
+        touch(165, 1594, 750);
+        waitForEditor("AB你好" + second + "CD");
+
+        openPrediction();
+        second = awaitText("2 ").getText().toString().substring(2);
+        sendDigitChord(KeyEvent.KEYCODE_NUMPAD_2, KeyEvent.META_NUM_LOCK_ON);
+        waitForEditor("AB你好" + second + "CD");
+
+        openPrediction();
+        // Both schemes have seven page slots. An unmatched 0 should close this menu.
+        sendKeyDownUpSync(KeyEvent.KEYCODE_0);
+        waitForEditor("AB你好0CD");
+        waitForPredictionToClose();
+        sendKeyDownUpSync(KeyEvent.KEYCODE_1);
+        waitForEditor("AB你好01CD");
+
+        openPrediction();
+        java.util.concurrent.atomic.AtomicInteger shortcut = new java.util.concurrent.atomic.AtomicInteger();
+        runOnMainSync(() -> editor.setOnKeyListener((v, keyCode, event) -> {
+            if (keyCode != KeyEvent.KEYCODE_1 || !event.isCtrlPressed()) return false;
+            if (event.getAction() == KeyEvent.ACTION_DOWN) shortcut.incrementAndGet();
+            return true;
+        }));
+        try {
+            sendDigitChord(KeyEvent.KEYCODE_1, KeyEvent.META_CTRL_ON);
+            waitForPredictionToClose();
+            waitForEditor("AB你好CD");
+            if (shortcut.get() != 1) throw new AssertionError("Ctrl+1 did not reach the editor exactly once");
+        } finally {
+            runOnMainSync(() -> editor.setOnKeyListener(null));
+        }
+    }
+
+    private void sendDigitChord(int code, int meta) {
+        long down = SystemClock.uptimeMillis();
+        for (int action : new int[]{KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP}) {
+            sendKeySync(new KeyEvent(down, SystemClock.uptimeMillis(), action, code, 0, meta));
+        }
     }
 
     private boolean typeModeSample() {
@@ -330,8 +380,10 @@ public class HistorySmoke extends Instrumentation {
             AccessibilityNodeInfo root = win.getRoot();
             if (root == null) continue;
             for (AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByText(prefix)) {
-                if (node.isVisibleToUser() && node.getText() != null &&
-                    node.getText().toString().startsWith(prefix)) return node;
+                if (!node.isVisibleToUser() || node.getText() == null) continue;
+                String label = node.getText().toString();
+                if (label.startsWith(prefix) || (label.length() > 2 && label.charAt(1) == ' '
+                    && Character.isDigit(label.charAt(0)) && label.startsWith(prefix, 2))) return node;
             }
         }
         return null;
