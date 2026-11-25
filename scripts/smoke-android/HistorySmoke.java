@@ -481,7 +481,7 @@ public class HistorySmoke extends Instrumentation {
             if (expected.equals(current[0])) return;
             SystemClock.sleep(100);
         }
-        throw new AssertionError("The selected text did not reach the editor");
+        throw new AssertionError("Expected test editor text [" + expected + "], found [" + current[0] + "]");
     }
 
     private void copy(String text, boolean sensitive) {
