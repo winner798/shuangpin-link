@@ -256,6 +256,26 @@ public class HistorySmoke extends Instrumentation {
         touch(165, 1594, 750); // W's printed digit 2
         touch(530, 2108, 40);
         waitForEditor("V2");
+        touch(75, 1937, 40);   // Begin another identifier.
+        touch(537, 1937, 40);
+        touch(90, 2108, 40);   // 123
+        touch(165, 1594, 40);  // 2
+        touch(90, 2108, 40);   // ABC
+        touch(90, 2108, 40);   // Reopen 123 while V2 is still being edited.
+        touch(270, 1594, 40);  // 3
+        touch(530, 2108, 40);  // Confirm the whole identifier without a trailing space.
+        waitForEditor("V2V23");
+        touch(57, 1594, 40);   // Start an independent number on the same keypad.
+        waitForEditor("V2V231");
+        touch(830, 2108, 40);  // Standalone period uses the keypad's restored ASCII mode.
+        waitForEditor("V2V231.");
+        touch(90, 2108, 40);   // ABC
+        touch(754, 1937, 40);  // n
+        touch(807, 1594, 40);  // i
+        touch(90, 2108, 40);   // An ordinary Chinese composition still commits on switching.
+        touch(165, 1594, 40);
+        waitForEditor("V2V231.你2");
+        touch(90, 2108, 40);
     }
 
     private void selectWord(String spelling, String word) {

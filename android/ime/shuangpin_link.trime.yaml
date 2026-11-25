@@ -194,6 +194,7 @@ preset_keyboards:
     width: 10
     columns: 10
     ascii_mode: 1
+    reset_ascii_mode: true
     ascii_keyboard: number
     keys:
       - {click: '1'}

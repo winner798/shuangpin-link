@@ -477,13 +477,26 @@ def prepare_android():
         ("private fun detachCurrentView() {", "private fun detachCurrentView(saveMode: Boolean = true) {"),
         ("        activeKeyboard?.lastAsciiMode = rime.run { statusCached }.isAsciiMode",
          "        if (saveMode) activeKeyboard?.lastAsciiMode = rime.run { statusCached }.isAsciiMode"),
-        ("            if (currentMode != targetMode) {", "            if (applyLayoutMode && currentMode != targetMode) {"),
         ('        attachKeyboard(evalKeyboard(".default"))', '        attachKeyboard(evalKeyboard(".default"), applyLayoutMode = false)'),
         ("            detachCurrentView()\n            attachKeyboard(target)",
          "            detachCurrentView(saveMode = applyLayoutMode)\n            attachKeyboard(target, applyLayoutMode)"),
         ("        detachCurrentView()\n        if (isAll)", "        detachCurrentView(saveMode = false)\n        if (isAll)"),
         ("        attachKeyboard(id)\n    }", "        attachKeyboard(id, applyLayoutMode = false)\n    }"),
     ])
+    layout_start = "            val currentMode = rime.run { statusCached }.isAsciiMode"
+    layout_end = "            currentKeyboard = it"
+    text = keyboard.read_text(encoding="utf-8")
+    if layout_start in text:
+        begin = text.index(layout_start)
+        end = text.index(layout_end, begin)
+        keyboard.write_text(text[:begin] + '''            if (applyLayoutMode) {
+                val targetMode = if (it.resetAsciiMode) it.asciiMode else it.lastAsciiMode
+                service.postRimeJob {
+                    setRuntimeOption(if (target == "number") "link_number_layout" else "link_other_layout", targetMode)
+                }
+            }
+
+''' + text[end:], encoding="utf-8")
     runpy.run_path(str(ROOT / "android/apply_design.py"))["apply_design"](src, assets)
     change(service, [
         ("            setNullInputType(isNullType)", '''            val privateField = isNullType || com.osfans.trime.link.sensitiveEditor(attribute)
@@ -503,16 +516,30 @@ def prepare_android():
     body = code.index("\n", start) + 1
     end = code.index("\n    }", body)
     code = code[:body] + '''        when (option) {
-            "link_editor_ascii" -> editorMode.enter(value, getRimeOption("ascii_mode"))?.let {
-                setRimeOption("ascii_mode", it)
+            "link_editor_ascii" -> {
+                deferredNumberAscii = false
+                editorMode.enter(value, getRimeOption("ascii_mode"))?.let { setRimeOption("ascii_mode", it) }
             }
-            "link_user_ascii" -> setRimeOption("ascii_mode", editorMode.select(value))
+            "link_user_ascii" -> {
+                deferredNumberAscii = false
+                setRimeOption("ascii_mode", editorMode.select(value))
+            }
             "link_private" -> {
+                deferredNumberAscii = false
                 editorMode.privateField = value
                 setRimeOption(option, value)
                 applyEditorLanguage()
             }
             "ascii_mode" -> setRimeOption(option, editorMode.layout(value))
+            "link_number_layout", "link_other_layout" -> {
+                val current = getRimeOption("ascii_mode")
+                deferredNumberAscii = option == "link_number_layout" && value && !current &&
+                    identifierPrefix.matches(getRimeRawInput())
+                if (!deferredNumberAscii && current != value) {
+                    if (commitRimeComposition()) emitResponse()
+                    setRimeOption("ascii_mode", editorMode.layout(value))
+                }
+            }
             else -> setRimeOption(option, value)
         }''' + code[end:]
     # Replace this bounded section so both pristine and previously prepared checkouts converge.
@@ -521,6 +548,8 @@ def prepare_android():
                  if marker in code), default=key_start)
     end = code.index("        lastAsciiTipsText = asciiTipsText(getRimeStatus())", key_start)
     code = code[:start] + '''    private val editorMode = com.osfans.trime.link.LinkEditorMode()
+    private var deferredNumberAscii = false
+    private val identifierPrefix = Regex("[A-Z][A-Za-z0-9]*")
 
     private fun applyEditorLanguage() {
         val needed = editorMode.required() ?: return
@@ -528,6 +557,10 @@ def prepare_android():
     }
 
     private fun processKeyInner(value: Int, modifiers: Int, isVirtual: Boolean): Boolean {
+        if (deferredNumberAscii && getRimeRawInput().isEmpty()) {
+            deferredNumberAscii = false
+            setRimeOption("ascii_mode", editorMode.layout(true))
+        }
         applyEditorLanguage()
 ''' + code[end:]
     code = code.replace("        protectPrivateEditor()", "        applyEditorLanguage()")
