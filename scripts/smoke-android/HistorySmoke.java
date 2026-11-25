@@ -28,14 +28,14 @@ public class HistorySmoke extends Instrumentation {
     private UiAutomation ui;
     private EditText editor;
     private Activity activity;
-    private boolean testArrows;
+    private String scenario;
     private static final String SAMPLE = "Pearl clipboard sample " +
         "01234567890123456789012345678901234567890123456789012345678901234567890123456789";
     private static final String PRIVATE = "Excluded test fixture";
 
     @Override public void onCreate(Bundle args) {
         super.onCreate(args);
-        testArrows = args != null && "arrows".equals(args.getString("scenario"));
+        scenario = args == null ? null : args.getString("scenario");
         start();
     }
 
@@ -50,7 +50,25 @@ public class HistorySmoke extends Instrumentation {
             activity = startActivitySync(open);
             editor = activity.findViewById(android.R.id.content).findViewWithTag("sampleEditor");
             keyboard(true);
-            if (testArrows) {
+            if ("double-pinyin-order".equals(scenario)) {
+                composeSample("ah", "昂");
+                AccessibilityNodeInfo phrase = awaitText("安徽");
+                Rect word = new Rect();
+                phrase.getBoundsInScreen(word);
+                for (String character : new String[]{"昂", "肮", "盎", "卬"}) {
+                    Rect letter = new Rect();
+                    awaitText(character).getBoundsInScreen(letter);
+                    if (letter.centerX() >= word.left || !word.contains(word.centerX(), letter.centerY()))
+                        throw new AssertionError(character + " should precede 安徽 on the same candidate row");
+                }
+                tap(phrase);
+                waitForEditor("安徽");
+                result.putString("status", "MS Shuangpin single characters precede a selectable phrase");
+                finish(Activity.RESULT_OK, result);
+                return;
+            }
+            if ("arrows".equals(scenario)) {
+                verifyFullPinyinSingleSyllable();
                 verifyPassiveSuggestions();
                 verifyBundledWords();
                 result.putString("status", "Passive predictions yielded to editor actions and explicit selection worked");
@@ -63,20 +81,25 @@ public class HistorySmoke extends Instrumentation {
             touch(540, 1766, 35);
             tap(awaitText("@gmail.com"));
             waitForEditor("@gmail.com");
-            runOnMainSync(() -> editor.setText(""));
+            runOnMainSync(() -> { editor.setText("左右"); editor.setSelection(1); });
             keyboard(false);
             copy(SAMPLE, false);
             keyboard(true);
-            tap(awaitText("Pearl clipboard sample"));
-            awaitText("最近 1 条");
-            tap(awaitText("查看"));
-            awaitText(SAMPLE);
-            tap(awaitText("粘贴"));
-            waitForEditor(SAMPLE);
+            AccessibilityNodeInfo preview = awaitText("Pearl clipboard sample");
+            if (!preview.getText().toString().endsWith("…")) throw new AssertionError("Expected a shortened preview");
+            tap(preview);
+            waitForEditor("左" + SAMPLE + "右");
             copy(PRIVATE, true);
             SystemClock.sleep(500);
+            if (find(PRIVATE) != null) throw new AssertionError("A marked clip appeared in the bar");
+            runOnMainSync(() -> editor.setSelection(1, 1 + SAMPLE.length()));
             copy("Second ordinary test clip", false);
             tap(awaitText("Second ordinary test clip"));
+            waitForEditor("左Second ordinary test clip右");
+            copy("Second ordinary test clip", false);
+            Rect bounds = new Rect();
+            awaitText("Second ordinary test clip").getBoundsInScreen(bounds);
+            touch(bounds.centerX(), bounds.centerY(), 850);
             awaitText("最近 2 条");
             if (find(PRIVATE) != null) throw new AssertionError("A marked clip entered history");
             tap(awaitText("删除"));
@@ -113,6 +136,51 @@ public class HistorySmoke extends Instrumentation {
             touch(key[0], key[1], 40);
             SystemClock.sleep(85);
         }
+    }
+
+    private void composeSample(String spelling, String first) {
+        runOnMainSync(() -> {
+            editor.setText("");
+            activity.getSystemService(InputMethodManager.class).restartInput(editor);
+        });
+        keyboard(true);
+        for (char ch : spelling.toCharArray()) {
+            switch (ch) { // Positions on the 1080 px emulator keyboard.
+                case 'a': touch(114, 1766, 40); break;
+                case 'h': touch(644, 1766, 40); break;
+                case 'x': touch(324, 1937, 40); break;
+                case 'i': touch(807, 1594, 40); break;
+                case 'n': touch(754, 1937, 40); break;
+                case '\'': sendKeyDownUpSync(KeyEvent.KEYCODE_APOSTROPHE); break;
+                default: throw new IllegalArgumentException(spelling);
+            }
+            SystemClock.sleep(85);
+        }
+        awaitText(first);
+    }
+
+    private void verifyFullPinyinSingleSyllable() {
+        // xian also matches xi'an. The old fourth and fifth choices were 西安 and 西岸.
+        for (int key : new int[]{KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_5}) {
+            composeSample("xian", "先");
+            sendKeyDownUpSync(key);
+            String[] selected = {""};
+            for (int attempt = 0; attempt < 40; attempt++) {
+                runOnMainSync(() -> {
+                    if (BaseInputConnection.getComposingSpanStart(editor.getText()) < 0)
+                        selected[0] = editor.getText().toString();
+                });
+                if (!selected[0].isEmpty()) break;
+                SystemClock.sleep(100);
+            }
+            String text = selected[0];
+            if (text.codePointCount(0, text.length()) != 1 || !Character.isIdeographic(text.codePointAt(0)))
+                throw new AssertionError("Expected a single character for xian at " +
+                    KeyEvent.keyCodeToString(key) + ", got [" + text + "]");
+        }
+        composeSample("xi'an", "西安");
+        sendKeyDownUpSync(KeyEvent.KEYCODE_SPACE);
+        waitForEditor("西安");
     }
 
     private void verifyBundledWords() {

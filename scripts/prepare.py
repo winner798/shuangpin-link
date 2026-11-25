@@ -144,6 +144,7 @@ def copy_rime(destination, windows=False):
     text = re.sub(r"(?m)^(  page_size: )5\b", r"\g<1>7", text, count=1)
     default_yaml.write_text(text, encoding="utf-8")
     spelling_sets = []
+    mobile_profiles = {}
     for schema_id in INPUT_SCHEMES:
         schema = destination / f"{schema_id}.schema.yaml"
         text = schema.read_text(encoding="utf-8")
@@ -158,6 +159,9 @@ def copy_rime(destination, windows=False):
         text = re.sub(r"(?m)^    - simplifier@traditionalize[^\n]*\n", "", text)
         text = re.sub(r"(?m)^    - uniquifier",
                       "    - lua_filter@*link_initials\n    - simplifier@link_simplified\n    - lua_filter@*link_words\n    - uniquifier", text, count=1)
+        if not windows:
+            text = text.replace("    - uniquifier", "    - lua_filter@*link_mobile_han\n    - uniquifier", 1)
+            text += "\nlink_mobile_han:\n  enabled: true\n"
         algebra = re.search(r"(?m)^  algebra:\n(?P<rules>(?:[ \t]+[^\n]*\n|#[^\n]*\n|\n)*)", text)
         if not algebra:
             raise RuntimeError(f"Missing spelling rules in {schema_id}")
@@ -171,6 +175,7 @@ def copy_rime(destination, windows=False):
         fuzzy = ["fuzz/eng$/en/", "fuzz/en$/eng/", "fuzz/ing$/in/", "fuzz/in$/ing/"]
         for name, rules in (("exact", exact), ("fuzzy", fuzzy + exact)):
             values = [rule.split(" #", 1)[0].strip() for rule in rules]
+            mobile_profiles[f"{schema_id}_{name}"] = values
             spelling_sets.append(f"{schema_id}_{name}:\n" + "".join(f"  - {json.dumps(rule, ensure_ascii=False)}\n" for rule in values))
         text = text[:algebra.start()] + f"  algebra:\n    __include: link_profile:/{schema_id}\n\n" + text[algebra.end():]
         text += ("\n\npredictor:\n  db: predict.db\n  max_candidates: 12\n  max_iterations: 2\n"
@@ -197,6 +202,10 @@ def copy_rime(destination, windows=False):
         ROOT / "rime/public_continuations.tsv", destination / "lua/link_public_words_data.lua",
     )
     if not windows:
+        shutil.copyfile(ROOT / "android/lua/link_mobile_han.lua", destination / "lua/link_mobile_han.lua")
+        runpy.run_path(str(ROOT / "scripts/build_mobile_han.py"))["build"](
+            dictionaries / "8105.dict.yaml", mobile_profiles, destination / "lua/link_mobile_han_data.lua",
+        )
         shutil.copyfile(ROOT / "rime/english_corrections.tsv", destination / "english_corrections.tsv")
     shutil.copyfile(download("predict.db", "https://github.com/rime/librime-predict/releases/download/data-1.0/predict.db"),
                     destination / "predict.db")

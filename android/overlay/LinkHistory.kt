@@ -42,27 +42,40 @@ internal data class HistorySnapshot(val through: Long = 0, val items: List<Histo
 
 internal data class HistoryView(
     val items: List<HistoryItem> = emptyList(),
-    val preview: String? = null,
+    val preview: HistoryItem? = null,
     val error: Boolean = false,
 )
 
-internal fun bindHistoryPreview(view: View, service: TrimeInputMethodService, update: (String?, Bitmap?) -> Unit) {
+internal fun bindHistoryPreview(view: View, suggestion: View, service: TrimeInputMethodService, update: (String?, Bitmap?) -> Unit) {
     view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
         private var updates: Job? = null
         override fun onViewAttachedToWindow(v: View) {
             updates = service.lifecycleScope.launch {
-                combine(service.linkHistory.view.map { it.preview }.distinctUntilChanged(), service.linkImages.view) { text, image ->
-                    if (image.label.isNotEmpty()) image else {
-                        val excerpt = text?.take(80)?.replace('\n', ' ')?.replace('\r', ' ').orEmpty()
-                        ImageStatus(if (text != null && text.length > 80) "${excerpt}…" else excerpt)
+                combine(service.linkHistory.view.map { it.preview }.distinctUntilChanged(), service.linkImages.view) {
+                    item, image -> item to image
+                }.collect { (item, image) ->
+                    if (image.label.isNotEmpty()) {
+                        update(image.label, image.thumbnail)
+                        suggestion.setOnClickListener { if (service.linkImages.view.value === image) service.linkImages.tap() }
+                    } else if (item != null) {
+                        val excerpt = item.text.take(80).replace('\n', ' ').replace('\r', ' ')
+                        update(if (item.text.length > 80) "${excerpt}…" else excerpt, null)
+                        suggestion.setOnClickListener {
+                            if (service.linkImages.view.value.label.isEmpty() && service.linkHistory.canPastePreview(item) &&
+                                service.currentInputConnection?.commitText(item.text, 1) == true) {
+                                service.linkHistory.hidePreview()
+                            }
+                        }
+                    } else {
+                        suggestion.setOnClickListener(null)
+                        update(null, null)
                     }
-                }.collect { value ->
-                    update(value.label, value.thumbnail)
                 }
             }
         }
         override fun onViewDetachedFromWindow(v: View) {
             updates?.cancel()
+            suggestion.setOnClickListener(null)
             update(null, null)
         }
     })
@@ -106,6 +119,9 @@ internal class LinkHistory(
         mutableView.value = mutableView.value.copy(preview = null)
     }
 
+    fun canPastePreview(item: HistoryItem): Boolean =
+        enabled && previewTime == item.time && view.value.preview == item
+
     fun showRecordedPreview(time: Long) {
         if (!canImport(time)) return
         previewTime = time
@@ -141,7 +157,7 @@ internal class LinkHistory(
                         next
                     }
                     if (enabled && at == generation) {
-                        val preview = updated.items.firstOrNull()?.takeIf { it.time == previewTime }?.text
+                        val preview = updated.items.firstOrNull()?.takeIf { it.time == previewTime }
                         mutableView.value = HistoryView(updated.items, preview)
                     }
                 }

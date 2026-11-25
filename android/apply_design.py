@@ -89,8 +89,11 @@ def apply_design(src, assets):
             }"""
     if old_binding in input_bar.read_text(encoding="utf-8"):
         old_preview = old_binding
+    image_binding = "com.osfans.trime.link.bindHistoryPreview(this, service) { preview, thumbnail ->"
+    if image_binding in input_bar.read_text(encoding="utf-8"):
+        apply_edit(input_bar, image_binding, image_binding.replace("this, service", "this, alwaysUi.clipboardUi.suggestionView, service"))
     apply_edit(input_bar, old_preview,
-               """            com.osfans.trime.link.bindHistoryPreview(this, service) { preview, thumbnail ->
+               """            com.osfans.trime.link.bindHistoryPreview(this, alwaysUi.clipboardUi.suggestionView, service) { preview, thumbnail ->
                 alwaysUi.clipboardUi.text.text = preview.orEmpty()
                 alwaysUi.clipboardUi.setPreview(thumbnail)
                 isClipboardFresh = !preview.isNullOrEmpty()
@@ -102,7 +105,11 @@ def apply_design(src, assets):
     history_click = "                    if (service.linkHistory.enabled) windowManager.attachWindow(com.osfans.trime.link.HistoryWindow(di))"
     if history_click in input_bar.read_text(encoding="utf-8"):
         old_click = history_click
-    apply_edit(input_bar, old_click, history_click.replace("if (service.", "if (!service.linkImages.tap() && service."))
+    image_click = history_click.replace("if (service.", "if (!service.linkImages.tap() && service.")
+    if image_click in input_bar.read_text(encoding="utf-8"):
+        old_click = image_click
+    apply_edit(input_bar, "                setOnClickListener {\n" + old_click + "\n                }",
+               "                // bindHistoryPreview assigns the click to the item actually displayed.")
     apply_edit(input_bar, """            clipboardUi.dismiss.setOnClickListener {
                 dismissClipboardSuggestion()""", """            clipboardUi.dismiss.setOnClickListener {
                 if (!service.linkImages.dismiss()) dismissClipboardSuggestion()""")

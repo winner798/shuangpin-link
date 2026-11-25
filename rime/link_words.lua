@@ -127,6 +127,9 @@ end
 function filter.init(env)
     reset(env)
     env.scheme = env.engine.schema.schema_id .. "/"
+    if env.engine.schema.config:get_bool("link_mobile_han/enabled") then
+        env.mobile_groups = require("link_mobile_han").groups_for(env.engine.schema)
+    end
     env.enabled = env.engine.schema.config:get_bool("translator/enable_user_dict") ~= false
     if env.enabled then
         if not db then
@@ -231,6 +234,26 @@ function filter.func(translation, env)
             end
             ranked[i] = {candidate = cand, index = i, count = score}
             if i < 24 then cand = iter(stream) end
+        end
+        -- Reintroduce previously selected characters beyond the native learning
+        -- window, using the same contextual score as candidates near the front.
+        local group = env.mobile_groups and env.mobile_groups[input]
+        if group and ctx.caret_pos == #input then
+            local present = {}
+            for _, item in ipairs(ranked) do present[item.candidate.text] = true end
+            local extras = {}
+            for word, count in pairs(counts) do
+                if not present[word] and utf8.len(word) == 1 and group:find(word, 1, true) then
+                    extras[#extras + 1] = word
+                end
+            end
+            table.sort(extras)
+            for _, word in ipairs(extras) do
+                ranked[#ranked + 1] = {
+                    candidate = Candidate("link_mobile_han", 0, #input, word, ""),
+                    index = #ranked + 1, count = counts[word] + 2 * math.min(4, contextual[word] or 0),
+                }
+            end
         end
         table.sort(ranked, function(a, b)
             if a.count == b.count then return a.index < b.index end

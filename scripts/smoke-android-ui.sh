@@ -124,6 +124,8 @@ adb shell input tap 530 2108
 adb shell uiautomator dump --compressed /sdcard/shuangpin-editor.xml
 adb exec-out cat /sdcard/shuangpin-editor.xml > "$output/android-editor.xml"
 grep -F 'text="你好"' "$output/android-editor.xml" >/dev/null
+adb shell am instrument -w -e scenario double-pinyin-order "$preview/.HistorySmoke" | tee "$output/android-double-pinyin-order.txt"
+grep -F 'MS Shuangpin single characters precede a selectable phrase' "$output/android-double-pinyin-order.txt" >/dev/null
 
 # Give the second scheme a fresh session while keeping the compiled dictionaries.
 adb shell am force-stop "$package"
