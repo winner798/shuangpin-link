@@ -1,8 +1,9 @@
 -- Counts and short continuations are shared by all Rime sessions in this process.
 -- Editor context and its timeout belong to one filter instance only.
 local db, users = nil, 0
-local MAX_CHOICES, MAX_CHARS, TIMEOUT = 16, 16, 90
-local MAX_CONTEXT_WORDS, MAX_CONTEXT_CHARS = 4, 24
+local MAX_CHOICES, MAX_CHARS, TIMEOUT = 16, 32, 90
+local MAX_CONTEXT_WORDS, MAX_CONTEXT_CHARS = 6, 32
+local MAX_CONTINUATION_WORDS = 3
 local filter = {}
 local prediction_menu = require("link_prediction")
 local public_words = require("link_public_words")
@@ -68,14 +69,28 @@ end
 
 -- Index contiguous text so different commit boundaries can match the same history.
 -- Longest first, with the most recent word providing the last fallback.
-local function history_keys(history)
+local function history_keys(history, last)
     local keys, text = {}, ""
-    for i = #history, 1, -1 do
+    for i = last or #history, 1, -1 do
         text = history[i] .. text
         if utf8.len(text) > MAX_CONTEXT_CHARS then break end
-        table.insert(keys, 1, "after/" .. text)
+        table.insert(keys, 1, text)
     end
     return keys
+end
+
+-- A→B→C and A→B→C→D can later offer BC and BCD after A. Keep this
+-- evidence separate from direct picks so one incidental run is never suggested.
+local function learn_continuations(history, text)
+    for _, context in ipairs(history_keys(history)) do count_choice("after/" .. context, text) end
+    local continuation = text
+    for last = #history - 1, math.max(1, #history - MAX_CONTINUATION_WORDS + 1), -1 do
+        continuation = history[last + 1] .. continuation
+        if utf8.len(continuation) > MAX_CHARS then break end
+        for _, context in ipairs(history_keys(history, last)) do
+            count_choice("sequence/" .. context, continuation)
+        end
+    end
 end
 
 local function remember(ctx, env)
@@ -87,9 +102,9 @@ local function remember(ctx, env)
         if #input <= 64 and input:match("^[a-z;']+$") then
             count_choice(env.scheme .. input, text)
         end
-        for _, key in ipairs(history_keys(env.history)) do count_choice(key, text) end
+        learn_continuations(env.history, text)
         -- Recall the untyped suffix of phrases previously selected in one operation.
-        for i = 1, math.min(8, utf8.len(text) - 1) do
+        for i = 1, utf8.len(text) - 1 do
             local cut = utf8.offset(text, i + 1)
             count_choice("after/" .. text:sub(1, cut - 1), text:sub(cut))
         end
@@ -97,6 +112,25 @@ local function remember(ctx, env)
     if #env.history == MAX_CONTEXT_WORDS then table.remove(env.history, 1) end
     table.insert(env.history, text)
     env.last_time, env.pending, env.suggestions = os.time(), true, nil
+end
+
+local function sequence_choices(context, direct)
+    local choices = read_choices("sequence/" .. context)
+    if #choices > 0 or not direct[1] or direct[1].count < 2 then return choices end
+    -- Older profiles already count A→B and AB→C. Require both specific edges;
+    -- a general B→C preference from some other sentence is not sufficient.
+    local next_word = direct[1]
+    local extended = context .. next_word.word
+    if utf8.len(extended) <= MAX_CONTEXT_CHARS then
+        local tail = read_choices("after/" .. extended)[1]
+        if tail and tail.count >= 2 then
+            local phrase = next_word.word .. tail.word
+            if utf8.len(phrase) <= MAX_CHARS then
+                choices[1] = {word = phrase, count = math.min(next_word.count, tail.count)}
+            end
+        end
+    end
+    return choices
 end
 
 local function continuations(ctx, env)
@@ -108,18 +142,32 @@ local function continuations(ctx, env)
     if #history == 0 then return result end
     result.public = public_words.following(table.concat(history), history[#history])
     if not learning(ctx, env) then return result end
-    local keys = history_keys(history)
-    if #history >= 2 then
-        -- 0.4.1 stored some longer two-word contexts only in this namespace.
-        table.insert(keys, math.max(1, #keys), "pair/" .. history[#history - 1] .. "/" .. history[#history])
+    local function append(item)
+        if not result.counts[item.word] then
+            table.insert(result.personal, item.word)
+            result.counts[item.word] = item.count
+        end
     end
-    for _, key in ipairs(keys) do
-        for _, item in ipairs(read_choices(key)) do
-            if not result.counts[item.word] then
-                table.insert(result.personal, item.word)
-                result.counts[item.word] = item.count
+    for _, context in ipairs(history_keys(history)) do
+        if #history >= 2 and context == history[#history] then
+            -- Keep exact pairs from 0.4.1 ahead of the one-word fallback.
+            for _, item in ipairs(read_choices("pair/" .. history[#history - 1] .. "/" .. context)) do
+                append(item)
             end
         end
+        local direct = read_choices("after/" .. context)
+        local sequences = sequence_choices(context, direct)
+        local index = 1
+        for _, item in ipairs(sequences) do
+            if item.count < 2 then break end
+            -- With equal evidence prefer the continuation that saves another pick.
+            while direct[index] and direct[index].count > item.count do
+                append(direct[index])
+                index = index + 1
+            end
+            append(item)
+        end
+        for i = index, #direct do append(direct[i]) end
     end
     return result
 end
@@ -193,8 +241,9 @@ function filter.func(translation, env)
                 yield(Candidate("prediction", first.start, first._end, word, ""))
             end
         end
-        -- Reserve first-page room for public suggestions and the built-in language model.
-        for i = 1, math.min(3, #suggestions.personal) do offer(suggestions.personal[i]) end
+        for i, word in ipairs(suggestions.personal) do
+            if i <= 2 or suggestions.counts[word] >= 2 then offer(word) end
+        end
         for _, word in ipairs(suggestions.public) do offer(word) end
         local cand = first
         local native = 0
@@ -204,13 +253,13 @@ function filter.func(translation, env)
                 yield(cand)
                 native = native + 1
                 if native == 2 then
-                    for i = 4, #suggestions.personal do offer(suggestions.personal[i]) end
+                    for _, word in ipairs(suggestions.personal) do offer(word) end
                 end
             end
             cand = iter(stream)
         end
         if native < 2 then
-            for i = 4, #suggestions.personal do offer(suggestions.personal[i]) end
+            for _, word in ipairs(suggestions.personal) do offer(word) end
         end
         return
     end

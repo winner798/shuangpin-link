@@ -84,7 +84,8 @@ internal sealed partial class LinkWindow
         AddCards(inputPage,
             Card("输入方案", modes, Copy("按 Win + 空格选「双拼互联」。打字时按 Ctrl + ` 切换方案。"), Copy("试打"), Input(trial, "试打输入框")),
             Card("输入辅助", fuzzy, englishCorrection, Copy("英文模式下，按空格时修正常见拼写错误。")),
-            Card("个人词库", learning, share, Actions(ActionButton("立即同步词库", SyncNow), ActionButton("清空本机词库", ClearDictionary))));
+            Card("个人词库", learning, Copy("常选词和连续输入的搭配会影响排序。搭配记忆只保存在这台电脑上。"),
+                share, Actions(ActionButton("立即同步词库", SyncNow), ActionButton("清空本机词库", ClearDictionary))));
 
         qrBox.BackColor = Glass.Contrast ? SystemColors.Window : Color.Transparent;
         qrBox.AccessibleName = "手机配对码";

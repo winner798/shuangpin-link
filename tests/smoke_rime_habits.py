@@ -3,6 +3,8 @@ import argparse
 import ctypes as c
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -10,6 +12,8 @@ options = argparse.ArgumentParser(description=__doc__)
 options.add_argument("--dll", type=Path, default=Path(".build/weasel-test-native/rime.dll"))
 options.add_argument("--shared", type=Path, default=Path(".build/weasel-bin/data"))
 options.add_argument("--data", type=Path, default=Path(".build/windows-data"), help="Prepared product schemas and dictionaries")
+options.add_argument("--memory-phase", choices=("train", "reopen"), help=argparse.SUPPRESS)
+options.add_argument("--memory-profile", type=Path, help=argparse.SUPPRESS)
 args = options.parse_args()
 dll_path = args.dll.resolve()
 dll_folder = os.add_dll_directory(str(dll_path.parent))
@@ -41,25 +45,35 @@ def api(name, result, *params):
 class Commit(c.Structure):
     _fields_ = [("size", I), ("text", S)]
 
-def run_suite(user):
-    shared = args.shared.resolve()
+def prepare_profile(user):
     shutil.copytree(args.data, user, dirs_exist_ok=True)
     (user / "link_habits").mkdir(exist_ok=True)
     # Exercise the same per-schema switch used by both clients' "pause learning" setting.
-    (user / "double_pinyin_mspy.custom.yaml").write_text(
-        "patch:\n  translator/enable_user_dict: false\n", encoding="utf-8")
-    (user / "custom_phrase.txt").write_text(
+    if not args.memory_phase:
+        (user / "double_pinyin_mspy.custom.yaml").write_text(
+            "patch:\n  translator/enable_user_dict: false\n", encoding="utf-8")
+    phrases = (
         "青柚竹筏\tzzqa\t99999\n青柚\tzzqb\t99999\n纸鹤锚点\tzzqc\t99999\n紫瓷圆盘\tzzqd\t99999\n"
         "明天\tzzqe\t99999\n下午\tzzqf\t99999\n新式陶灯\tzzqg\t99999\n流光玻璃\tzzqh\t99999\n"
         "晚些\tzzqi\t99999\n安排\tzzqj\t99999\n晚些安排\tzzqk\t99999\n"
-        "春汛\tzzql\t99999\n春讯\tzzql\t99998\n",
-        encoding="utf-8")
+        "春汛\tzzql\t99999\n春讯\tzzql\t99998\n"
+        "山麓观测小组今天下午汇报栖息地夜间监测结果\tzzqm\t99999\n"
+        "山麓观测小组今天下午\tzzqn\t99999\n")
+    (user / "custom_phrase.txt").write_text(phrases, encoding="utf-8")
+    if args.memory_phase:
+        (user / "custom_phrase_double.txt").write_text(phrases, encoding="utf-8")
+
+
+def run_suite(user):
+    shared = args.shared.resolve()
+    if args.memory_phase != "reopen":
+        prepare_profile(user)
     traits = Traits(c.sizeof(Traits)-4, str(shared).encode(), str(user).encode(), b"Shuangpin Link",
                     b"shuangpin-link", b"1", b"rime.habits-test", None, 2, b"", None, None)
     api("Setup", None, c.POINTER(Traits))(c.byref(traits))
     api("Initialize", None, c.POINTER(Traits))(c.byref(traits))
     try:
-        api("StartMaintenance", I, I)(1)
+        api("StartMaintenance", I, I)(int(args.memory_phase != "reopen"))
         api("JoinMaintenanceThread", None)()
         session = api("CreateSession", Z)()
         def menu():
@@ -129,9 +143,88 @@ def run_suite(user):
             option("link_new_editor", True)
             option("link_new_editor", False)
             reset()
+        def verify_identifiers(schema):
+            for events, expected in (
+                ([(ord("V"), 1), (ord("2"), 0)], "V2"),
+                ([(ord("V"), 0), (0xffb2, 16)], "V2"),
+                ([(ord(ch), 1 if ch.isalpha() else 0) for ch in "CPU12"], "CPU12"),
+                ([(ord("V"), 1), (ord("2"), 0), (0xff08, 0), (ord("3"), 0)], "V3"),
+            ):
+                new_editor()
+                for code, modifiers in events:
+                    assert key(code, modifiers) and not commit(), (schema, expected, hex(code))
+                    key(code, modifiers | (1 << 30))
+                    assert not commit()
+                assert key(32) and commit() == expected and not menu(), (schema, expected)
+            new_editor()
+            assert type_code("R2")[:2] == ["R2", "二"], menu()
+            click_candidate("二")
+            new_editor()
+            assert key(ord("v"))
+            if schema == b"rime_ice":
+                assert key(ord("2")) and menu()[0] == "二"
+                assert key(32) and commit() == "二"
+            else:
+                # Lowercase v is the Microsoft Shuangpin initial zh.
+                second = menu()[1]
+                assert key(ord("2")) and commit() == second
+            new_editor()
+        if args.memory_phase:
+            # Each spelling is real input in its respective schema. Distinct anchors
+            # keep evidence from the shared habits database independent in this check.
+            examples = (
+                (b"double_pinyin_mspy", ("m;tm", "明天"), ("xwwu", "下午"), ("klhv", "开会")),
+                (b"rime_ice", ("xiazhou", "下周"), ("shangwu", "上午"), ("kaihui", "开会")),
+            )
+            for schema, head, middle, tail in examples:
+                assert api("SelectSchema", I, Z, S)(session, schema)
+                expected = middle[1] + tail[1]
+                if args.memory_phase == "train":
+                    for previous in range(2):
+                        new_editor()
+                        enter(*head)
+                        assert expected not in menu(), (schema, previous, menu())
+                        enter(*middle)
+                        enter(*tail)
+                new_editor()
+                enter(*head)
+                print(schema, args.memory_phase, head[1], menu(), flush=True)
+                assert menu()[0] == expected and middle[1] in menu(), (schema, menu())
+                choose_prediction(ord("1"), 0)
+
+            # Four familiar alternatives for a public trigger must fit on page one.
+            favorites = (("zzqc", "纸鹤锚点"), ("zzqd", "紫瓷圆盘"),
+                         ("zzqg", "新式陶灯"), ("zzqh", "流光玻璃"))
+            if args.memory_phase == "train":
+                for code, word in favorites:
+                    for _ in range(3):
+                        new_editor()
+                        enter("tianqi", "天气")
+                        enter(code, word)
+                new_editor()
+                enter("zzqm", "山麓观测小组今天下午汇报栖息地夜间监测结果")
+                for _ in range(2):
+                    new_editor()
+                    enter("zzqc", "纸鹤锚点")
+                    option("link_private", True)
+                    enter("zzqd", "紫瓷圆盘")
+                    option("link_private", False)
+            new_editor()
+            enter("tianqi", "天气")
+            print(args.memory_phase, "four personal weather suggestions", menu(), flush=True)
+            assert set(menu()[:4]) == {word for _, word in favorites}, menu()
+            new_editor()
+            enter("zzqn", "山麓观测小组今天下午")
+            assert menu()[0] == "汇报栖息地夜间监测结果", menu()
+            new_editor()
+            enter("zzqc", "纸鹤锚点")
+            assert "紫瓷圆盘" not in menu(), menu()
+            api("DestroySession", I, Z)(session)
+            return
         for schema, full in ((b"double_pinyin_mspy", "nihk"), (b"rime_ice", "nihao")):
             assert api("SelectSchema", I, Z, S)(session, schema)
             reset()
+            verify_identifiers(schema)
             print(schema, "full", type_code(full))
             assert "你好" == menu()[0]
             option("incognito_mode", True)  # Exercise the bundled predictor without training the frequency fixture.
@@ -348,5 +441,13 @@ def run_suite(user):
         api("Finalize", None)()
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(prefix="ime-habits-", dir=".build") as temp:
-        run_suite(Path(temp).resolve())
+    if args.memory_phase:
+        run_suite(args.memory_profile.resolve())
+    else:
+        with tempfile.TemporaryDirectory(prefix="ime-habits-", dir=".build") as temp:
+            run_suite(Path(temp).resolve())
+        # A new native process must reopen the same persisted user database.
+        with tempfile.TemporaryDirectory(prefix="ime-memory-", dir=".build") as temp:
+            for phase in ("train", "reopen"):
+                subprocess.run([sys.executable, "-X", "utf8", "-B", __file__, *sys.argv[1:],
+                                "--memory-profile", temp, "--memory-phase", phase], check=True)

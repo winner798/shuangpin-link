@@ -1,4 +1,4 @@
-local accepted, noop = 1, 2
+local rejected, accepted, noop = 0, 1, 2
 local domains = require("link_domains")
 local prediction = require("link_prediction")
 
@@ -16,6 +16,31 @@ return function(key, env)
     if prediction.process_key(ctx, key, env.engine.schema) then return accepted end
     if ctx:get_option("link_private") then return noop end
     local segment = ctx.composition:back()
+    local identifier = segment and segment:has_tag("link_identifier")
+    local shortcut = key:ctrl() or key:alt() or key:super()
+    if identifier and shortcut and not (code >= 0xffe1 and code <= 0xffee) then
+        ctx:commit()
+        return rejected -- Pass the original shortcut to the editor, bypassing the selector.
+    end
+    if not ctx:get_option("ascii_mode") and not shortcut then
+        local digit = code >= 48 and code <= 57 and code or
+                      (code >= 0xffb0 and code <= 0xffb9 and 48 + code - 0xffb0)
+        if digit and (identifier or (ctx.caret_pos == #ctx.input and ctx.input:match("^[A-Z][A-Za-z]*$"))) then
+            ctx:push_input(string.char(digit))
+            return accepted
+        elseif identifier then
+            if (code >= 65 and code <= 90) or (code >= 97 and code <= 122) then
+                ctx:push_input(string.char(code))
+                return accepted
+            elseif code == 32 or code == 0xff0d or code == 0xff8d then -- Space, Return, KP_Enter
+                ctx:commit()
+                return accepted
+            elseif code >= 33 and code <= 126 then
+                ctx:commit() -- Punctuation and @ keep their regular processing below.
+                segment = nil
+            end
+        end
+    end
     if segment and segment:has_tag("link_email") then
         if key:ctrl() or key:alt() or key:super() then
             env.engine:commit_text(ctx.input)

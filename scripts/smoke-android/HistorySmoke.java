@@ -71,6 +71,8 @@ public class HistorySmoke extends Instrumentation {
                 verifyFullPinyinSingleSyllable();
                 verifyPassiveSuggestions();
                 verifyBundledWords();
+                verifyLearnedContinuation();
+                verifyUppercaseCode();
                 result.putString("status", "Passive predictions yielded to editor actions and explicit selection worked");
                 finish(Activity.RESULT_OK, result);
                 return;
@@ -221,6 +223,54 @@ public class HistorySmoke extends Instrumentation {
         // A fresh dictionary suggests 吗 after 你好. Check the candidate before sending
         // the key so an empty/disabled prediction menu cannot make the test pass.
         awaitText("吗");
+    }
+
+    private void verifyLearnedContinuation() {
+        // Use real keycaps and select each word independently, as in ordinary typing.
+        for (int pass = 0; pass < 3; pass++) {
+            runOnMainSync(() -> {
+                editor.setText("");
+                activity.getSystemService(InputMethodManager.class).restartInput(editor);
+            });
+            keyboard(true);
+            selectWord("mingtian", "明天");
+            waitForEditor("明天");
+            if (pass < 2) {
+                selectWord("xiawu", "下午");
+                selectWord("kaihui", "开会");
+            } else {
+                tap(awaitText("下午开会"));
+            }
+            waitForEditor("明天下午开会");
+        }
+    }
+
+    private void verifyUppercaseCode() {
+        runOnMainSync(() -> {
+            editor.setText("");
+            activity.getSystemService(InputMethodManager.class).restartInput(editor);
+        });
+        keyboard(true);
+        touch(75, 1937, 40);   // Shift
+        touch(537, 1937, 40);  // V
+        touch(165, 1594, 750); // W's printed digit 2
+        touch(530, 2108, 40);
+        waitForEditor("V2");
+    }
+
+    private void selectWord(String spelling, String word) {
+        String[] rows = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
+        int[] left = {57, 111, 216};
+        int[] y = {1594, 1766, 1937};
+        for (char ch : spelling.toCharArray()) {
+            for (int row = 0; row < rows.length; row++) {
+                int col = rows[row].indexOf(ch);
+                if (col < 0) continue;
+                touch(left[row] + 107 * col, y[row], 40);
+                break;
+            }
+        }
+        tap(awaitText(word));
     }
 
     private void verifyArrow(int key, int expectedCursor) {

@@ -120,7 +120,16 @@ def add_passive_predictions(source, native):
             '''  auto& state = get_session_status(ipc_id);
   const bool refresh = state.pendingLegacyPick && keyEvent.keycode == ibus::Select && keyEvent.mask == 0;
   state.pendingLegacyPick = false;
-  Bool handled = refresh || rime_api->process_key(session_id, keyEvent.keycode,''')
+  const bool plainReturn = (keyEvent.keycode == ibus::Return || keyEvent.keycode == ibus::KP_Enter) &&
+      !(keyEvent.mask & (ibus::SHIFT_MASK | ibus::CONTROL_MASK | ibus::ALT_MASK | ibus::SUPER_MASK));
+  Bool handled = refresh || rime_api->process_key(session_id, plainReturn ? ibus::Return : keyEvent.keycode,''')
+    replace(handler, '  // vim_mode when keydown only', '''  // Return finishes this interaction. A committed word can create a new
+  // prediction during process_key; discard that menu before reporting the result to TSF.
+  if (plainReturn && !(keyEvent.mask & ibus::RELEASE_MASK)) {
+    rime_api->set_option(session_id, "link_dismiss_prediction",
+                         !rime_api->get_option(session_id, "link_dismiss_prediction"));
+  }
+  // vim_mode when keydown only''')
     shutil.copyfile(native / 'CandidatePick.h', tsf / 'CandidatePick.h')
     replace_pattern(tsf / 'CandidateList.cpp', r'(?ms)^void WeaselTSF::_SelectCandidateOnCurrentPage\(.*?^}',
                     '#include "CandidatePick.h"')

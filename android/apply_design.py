@@ -334,11 +334,17 @@ def apply_design(src, assets):
     api = java / "core/RimeApi.kt"
     apply_edit(api, "    suspend fun clearComposition()", "    suspend fun dismissPrediction()\n\n    suspend fun clearComposition()")
     engine = java / "core/Rime.kt"
-    apply_edit(engine, "    override suspend fun clearComposition()", """    override suspend fun dismissPrediction(): Unit = withRimeContext {
-        if (hasMenu && getRimeRawInput().isEmpty()) {
+    clear_start = "    override suspend fun clearComposition()"
+    dismiss_start = "    override suspend fun dismissPrediction(): Unit = withRimeContext {"
+    source = engine.read_text(encoding="utf-8")
+    before = source[source.index(dismiss_start):source.index(clear_start)] + clear_start if dismiss_start in source else clear_start
+    apply_edit(engine, before, """    override suspend fun dismissPrediction(): Unit = withRimeContext {
+        if (getRimeRawInput().isEmpty()) {
+            // Cursor and focus changes also end a learning context with no visible suggestions.
+            val hadMenu = hasMenu
             val option = "link_dismiss_prediction"
             setRimeOption(option, !getRimeOption(option))
-            emitResponse()
+            if (hadMenu) emitResponse()
         }
     }
 

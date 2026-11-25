@@ -158,6 +158,9 @@ class LinkActivity : ComponentActivity() {
             keyboardStatus = addStatus(this, "")
             keyboardAction = addAction(this, "启用双拼互联", primary = true) { openKeyboardSetup() }
             addStatus(this, "打字时点「切换方案」，选择微软双拼或普通拼音。", top = 10)
+            fuzzy = addSwitch(this, "模糊拼音（en/eng、in/ing）", "fuzzy", false)
+            addSwitch(this, "英文自动纠错", "englishAutocorrect", false)
+            addStatus(this, "英文模式下，按空格时修正常见拼写错误。")
         }
 
         clipboardSection = section(pane, "设备互通") {
@@ -197,9 +200,7 @@ class LinkActivity : ComponentActivity() {
 
         section(pane, "个人词库") {
             learning = addSwitch(this, "学习选词习惯", "learning", true)
-            fuzzy = addSwitch(this, "模糊拼音（en/eng、in/ing）", "fuzzy", false)
-            addSwitch(this, "英文自动纠错", "englishAutocorrect", false)
-            addStatus(this, "英文模式下，按空格时修正常见拼写错误。")
+            addStatus(this, "常选词和连续输入的搭配会影响排序。搭配记忆只保存在这台手机上。")
             share = addSwitch(this, "跨设备共享词库", "share", true)
             syncAction = addAction(this, "立即同步词库") {
                 settings.prefs.edit().putLong("syncNow", System.currentTimeMillis()).apply()

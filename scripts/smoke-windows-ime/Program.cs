@@ -281,6 +281,41 @@ internal static class Program
         await WaitFor(() => !CandidateWindowVisible(), $"{name} did not close the final candidate list.");
         Console.WriteLine($"{name}: {arrow} closed the visible prediction list, moved the caret once, and kept Chinese typing active.");
         editor.Clear();
+        foreach (bool keypad in new[] { false, true })
+        {
+            await TypeCode(window, editor, keys);
+            await WaitFor(CandidateWindowVisible, "Expected a spelling before Return.");
+            await SendReturn(window, editor, keypad);
+            await WaitFor(() => editor.Text == keys && !CandidateWindowVisible(),
+                $"{name}: Return did not commit the raw spelling and close the menu.");
+            await TypeCode(window, editor, keys);
+            await SendChord(window, editor, Keys.Space);
+            await WaitFor(() => editor.Text == keys + "你好" && CandidateWindowVisible(),
+                $"{name}: expected suggestions before Return.");
+            await SendReturn(window, editor, keypad);
+            await WaitFor(() => editor.Text.Replace("\r\n", "\n") == keys + "你好\n" && !CandidateWindowVisible(),
+                $"{name}: Return did not dismiss the suggestion and deliver one newline.");
+            await TypeCode(window, editor, keys);
+            await SendChord(window, editor, Keys.Space);
+            await WaitFor(() => editor.Text.Replace("\r\n", "\n") == keys + "你好\n你好",
+                $"{name}: Chinese input did not resume after Return.");
+            await SendChord(window, editor, Keys.Escape);
+            editor.Clear();
+        }
+        Console.WriteLine($"{name}: main and keypad Enter closed spelling and prediction windows and Chinese input resumed.");
+        await SendChord(window, editor, Keys.ShiftKey, Keys.V);
+        await SendChord(window, editor, Keys.D2);
+        await SendChord(window, editor, Keys.Space);
+        await WaitFor(() => editor.Text == "V2" && !CandidateWindowVisible(),
+            $"{name}: Space did not confirm the literal identifier V2 exactly.");
+        editor.Clear();
+    }
+
+    private static async Task SendReturn(Form window, Control editor, bool keypad)
+    {
+        await EnsureFocus(window, editor);
+        Input[] inputs = [KeyInput(Keys.Enter, false, keypad), KeyInput(Keys.Enter, true, keypad)];
+        if (SendInput(2, inputs, Marshal.SizeOf<Input>()) != 2) throw new Win32Exception(Marshal.GetLastPInvokeError());
     }
 
     private static async Task TypeCode(Form window, RichTextBox editor, string keys)
@@ -575,11 +610,11 @@ internal static class Program
             throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not send keyboard input to the isolated editor.");
     }
 
-    private static Input KeyInput(Keys key, bool release) => new()
+    private static Input KeyInput(Keys key, bool release, bool extended = false) => new()
     {
         Type = 1, // INPUT_KEYBOARD
         Data = new InputData { Keyboard = new KeyboardInput { Key = (ushort)key,
-            Flags = (release ? 2u : 0u) | (key is Keys.Left or Keys.Right ? 1u : 0u) } },
+            Flags = (release ? 2u : 0u) | (extended || key is Keys.Left or Keys.Right ? 1u : 0u) } },
     };
 
     [DllImport("user32.dll")]
