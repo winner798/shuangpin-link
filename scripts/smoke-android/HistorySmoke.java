@@ -275,7 +275,18 @@ public class HistorySmoke extends Instrumentation {
         touch(90, 2108, 40);   // An ordinary Chinese composition still commits on switching.
         touch(165, 1594, 40);
         waitForEditor("V2V231.你2");
-        touch(90, 2108, 40);
+        touch(90, 2108, 40);   // ABC
+        touch(75, 1937, 750);  // Hold Shift to lock uppercase across multiple letters.
+        touch(430, 1937, 40);  // C
+        touch(1020, 1594, 40); // P
+        touch(700, 1594, 40);  // U
+        touch(75, 1937, 40);   // Release caps lock.
+        touch(90, 2108, 40);   // 123
+        touch(57, 1594, 40);
+        touch(165, 1594, 40);
+        touch(530, 2108, 40);
+        waitForEditor("V2V231.你2CPU12");
+        touch(90, 2108, 40);   // ABC
     }
 
     private void selectWord(String spelling, String word) {
